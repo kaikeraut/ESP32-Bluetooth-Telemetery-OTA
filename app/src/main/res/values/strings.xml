@@ -20,5 +20,10 @@
     <string name="menu_disconnect">Disconnect</string>
     <string name="menu_scan">Scan</string>
     <string name="menu_stop">Stop</string>
+    <string name="dxe_simple_mobile_app">**** DXe Simple Mobile App ****</string>
+    <string name="scan_start">Scan-Start</string>
+    <string name="telemetry_start">Telemetry-Start</string>
+    <string name="ota_start">OTA-Start</string>
+    <string name="_00_00_00_00_00_00">00:00:00:00:00:00</string>
 
 </resources>

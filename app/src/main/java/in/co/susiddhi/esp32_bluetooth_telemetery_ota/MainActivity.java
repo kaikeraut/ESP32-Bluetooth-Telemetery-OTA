@@ -57,6 +57,7 @@ import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -86,7 +87,6 @@ public class MainActivity extends AppCompatActivity {
     private final static int TEXT_APPEND                    = 1;
     private final static int TEXT_NOT_APPEND                = 0;
     private final static int TEXT_OTA_PERCENT               = 2;
-    private final static int FW_DETAILS_SIZE                = 256;
     // Storage Permissions
     private static final int REQUEST_EXTERNAL_STORAGE = 1;
     private static final int WRITE_STATUS_FAIL = 2;
@@ -113,6 +113,7 @@ public class MainActivity extends AppCompatActivity {
 
     Button btnScan, btnTelemetry, btnOTA;
     TextView textViewLog;
+    ProgressBar progressBarScan, progressBarOTA;
     EditText editTextMAC;
     private String connectedBluetoothMAC, connectedBluetoothName;
     private String esp32MACAddr;
@@ -133,6 +134,7 @@ public class MainActivity extends AppCompatActivity {
     BluetoothGatt mBluetoothGatt = null;
     BluetoothGattCharacteristic characEsp32 = null;
 
+    private int OtaTransferSuccessCheckUpdateStatus = 0;
     private final static String OTA_FILE_NAME = "ota_sample_bin.bin";
     private final static String ESP32_MAC = "24:0A:C4:FA:41:32";
     private final static String WRITE_SERVICE_UUID = "000000ff-0000-1000-8000-00805f9b34fb";
@@ -145,6 +147,9 @@ public class MainActivity extends AppCompatActivity {
     public static  final int MSG_PROCESS_BLE_PACKETS = 14;
     public static  final int MSG_PROCESS_START_OTA = 15;
     public static  final int MSG_GET_FW_DETAILS = 16;
+    public static  final int MSG_START_CONNECTION = 17;
+    public static  final int MSG_WAIT_OTA_COMPLETION = 18;
+
 
     /* Bluetooth message format index send to APP */
     public static  final int BT_HEADER_START_INDEX             =    0;
@@ -227,6 +232,13 @@ public class MainActivity extends AppCompatActivity {
         editTextMAC = (EditText)findViewById(R.id.editTextNumberMAC);
         editTextMAC.setInputType(InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
 
+        //Progress bar
+        progressBarScan = (ProgressBar) findViewById(R.id.progressBarScan);
+        progressBarOTA = (ProgressBar) findViewById(R.id.progressBar2Ota);
+
+        progressBarScan.setVisibility(View.GONE);
+        progressBarOTA.setVisibility(View.GONE);
+
         esp32BluetoothStatus = BLUETOOTH_DISCONNECTED;
         esp32MACAddr = sharedPreferences.getString(PREF_MAC_KEY, "");
         editTextMAC.setText(esp32MACAddr);
@@ -289,10 +301,16 @@ public class MainActivity extends AppCompatActivity {
         btnScan.setText(strScanStart);
         btnOTA.setText(strOtaStart);
         btnTelemetry.setText(strTelemetryStart);
-
+        progressBarOTA.setMax(100);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            progressBarOTA.setMin(0x0);
+        }
+        btnOTA.setVisibility(View.GONE);
+        btnTelemetry.setVisibility(View.GONE);
         btnOTA.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                OtaTransferSuccessCheckUpdateStatus = 0;
                 setOTA_Abort(OTA_ERROR_DEFAULT);
                 String otaFolderPath = "";
                 File otaDir = null;
@@ -305,23 +323,18 @@ public class MainActivity extends AppCompatActivity {
                         otaFolderPath = Environment.getExternalStorageDirectory().getPath()
                                 + File.separator + "Documents/";
                         otaDir = new File(otaFolderPath);
-                        if (otaDir.exists()) {
-
-                        }
+                        otaDir.exists();
                     }
                 }catch(Exception e){
                     Log.e(TAG, "onClick: " + e);
                 }
-                if(mConnected == false){
+                if(!mConnected){
                     setLogMessage("Device not Connected !!!", TEXT_APPEND);
                     return;
                 }
-                setLogMessage("OTA TODO", TEXT_APPEND);
+                progressBarOTA.setVisibility(View.VISIBLE);
                 Log.d(TAG, "onClick: OTA Click");
 
-                //Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-                //intent.addCategory(Intent.CATEGORY_OPENABLE);
-                //Intent intent = new Intent(Intent.ACTION_PICK);
                 otaFolderPath += "DXe-OTA" + File.separator;
                 Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
 
@@ -346,56 +359,8 @@ public class MainActivity extends AppCompatActivity {
                 }else {
                     Message msg = new Message();
                     msg.what = MSG_GET_FW_DETAILS;
-                    //msg.obj = otaFolderPath;
                     mHandler.sendMessage(msg);
-
-//                    String otaFilePath = otaFolderPath + "/" + OTA_FILE_NAME;
-//                    File file = new File(otaFilePath);
-//                    Log.d(TAG, "onClick: file length: " + file.length());
-//                    byte[] fileData = new byte[(int) file.length()];
-//                    DataInputStream dis = null;
-//                    try {
-//                        dis = new DataInputStream(new FileInputStream(file));
-//                        dis.readFully(fileData);
-//                        dis.close();
-//                        Log.d(TAG, "onClick: FILE DATA LEN:" + fileData.length);
-//                        //String data = String.format("%x")
-//                        //Log.d(TAG, "onClick: ");
-//
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
                 }
-
-
-/*
-                if(!otaDir.exists()){
-                    otaDir.mkdir();
-                    Log.d(TAG, "onCli!ck: Creating Directory:"+ otaFolderPath);
-                    setLogMessage("Creating Directory:"+otaFolderPath, TEXT_APPEND);
-
-                    File[] files = otaDir.listFiles();
-                    Log.d("Files", "Size: "+ files.length);
-                    if(files.length == 0) {
-                        setLogMessage("Copy OTA File to  below location and Start Again:" + otaFolderPath, TEXT_APPEND);
-                    }else{
-                        Uri uri = Uri.parse(otaFolderPath);
-                        intent.setDataAndType(uri, "application/octet-stream");
-                        startActivityForResult(Intent.createChooser(intent, "Open folder"), PICKFILE_RESULT_CODE);
-                    }
-                }else{
-                    File[] files = otaDir.listFiles();
-                    Log.d("Files", "Size: "+ files.length);
-                    if(files.length == 0) {
-                        setLogMessage("Copy OTA File to below location and Start Again:" + otaFolderPath, TEXT_APPEND);
-                    }else{
-                        Uri uri = Uri.parse(otaFolderPath);
-                        intent.setDataAndType(uri, "application/octet-stream");
-                        startActivityForResult(Intent.createChooser(intent, "Open folder"), PICKFILE_RESULT_CODE);
-                    }
-                }
-*/
-
             }
         });
 
@@ -450,6 +415,7 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
                 bleScanCount = 0;
+                progressBarScan.setVisibility(View.VISIBLE);
                 String mac = editTextMAC.getText().toString();
                 if(intScanning == 0) {
                     setLogMessage("Validating MAC Address...:" + mac, TEXT_APPEND);
@@ -476,7 +442,7 @@ public class MainActivity extends AppCompatActivity {
                         public void onTick(long millisUntilFinished) {
                             //String btnText = btnScan.getText().toString();
                             btnScan.setText(strScanStop+":"+ millisUntilFinished / 1000);
-                            Log.d(TAG, "onTick: seconds remaining: " + millisUntilFinished / 1000);
+                            Log.d(TAG, "onTick:SCAN: seconds remaining: " + millisUntilFinished / 1000);
                             //here you can have your logic to set text to edittext
                         }
 
@@ -501,8 +467,10 @@ public class MainActivity extends AppCompatActivity {
         });
 
         textViewLog.setMovementMethod(new ScrollingMovementMethod());
+
         esp32MessageHandler();
         verifyStoragePermissions(MainActivity.this);
+        //checkDownloadedFirmwareDetails();
     }//OnCreate
 
 
@@ -627,25 +595,18 @@ public class MainActivity extends AppCompatActivity {
                 bleScanCount++;
                 Log.d("BLE SCANING", "Device Name: " + result.getDevice().getName() + " MAC:" + result.getDevice().getAddress() + " rssi: " + result.getRssi());
             }
-            if(result.getDevice().getAddress().equalsIgnoreCase(esp32MACAddr))
+            if((res == false) && result.getDevice().getAddress().equalsIgnoreCase(esp32MACAddr))
             {
-                scannerTimer.cancel();
-                setLogMessage("Device Found:"+bleScanCount, TEXT_APPEND);
-                btnScan.setText(strScanStart);
                 stopScanning();
-                startGATTbacllbackService();
-
-               /* myDevice = result.getDevice();
-                Toast.makeText(getApplicationContext(), "FOUND Device:"+ myDevice.getName() + "="+myDevice.getAddress(), Toast.LENGTH_SHORT).show();
-                setLogMessage("Connecting to Device :"+myDevice.getAddress(), TEXT_APPEND);
-                Log.d(TAG, "LIST of UUIDs:"+ myDevice.getUuids());
                 scannerTimer.cancel();
-                mBluetoothGatt = myDevice.connectGatt(getApplicationContext(), false, mGattCallback);
-                Log.d(TAG, "Trying to create a new connection.");
-                connectedBluetoothMAC = myDevice.getAddress();
-                connectedBluetoothName = myDevice.getName();
-                mBluetoothGatt.connect();
-                stopScanning();*/
+                setLogMessage("Device Found:"+bleScanCount+"\n", TEXT_APPEND);
+                //Log.e(TAG, "DEVICE FOUND MESSSAGE: 3" );
+                btnScan.setText(strScanStart);
+
+                Message msg = new Message();
+                msg.what = MSG_START_CONNECTION;
+                mHandler.sendMessage(msg);
+
             }else{
                 Log.d(TAG, "NOT MATCHED:"+result.getDevice().getAddress() +"!="+ esp32MACAddr);
             }
@@ -660,6 +621,7 @@ public class MainActivity extends AppCompatActivity {
 
     public void startScanning() {
         Log.d(TAG,("start scanning"));
+        bleScanMacNameMap.clear();
         // Stops scanning after a predefined scan period.
         handlerScanner.postDelayed(new Runnable() {
             @Override
@@ -672,8 +634,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void stopScanning() {
+        progressBarScan.setVisibility(View.GONE);
         Log.d(TAG,("stopping scanning"));
-        bleScanMacNameMap.clear();
+        //bleScanMacNameMap.clear();
         btScanner.stopScan(leScanCallback);
         AsyncTask.execute(new Runnable() {
             @Override
@@ -708,12 +671,10 @@ public class MainActivity extends AppCompatActivity {
         }catch(Exception e){
             Log.e(TAG, "onClick: " + e);
         }
-        if(mConnected == false){
+        if(!mConnected){
             setLogMessage("Device not Connected !!!", TEXT_APPEND);
             return;
         }
-        setLogMessage("OTA TODO", TEXT_APPEND);
-        Log.d(TAG, "onClick: OTA Click");
 
         otaFolderPath += "DXe-OTA" + File.separator;
         Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
@@ -757,7 +718,6 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_MSG_TYPE_INDEX] = BT_MSG_HEADER_MSG_TYPE_OTA;
             data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_START;
             byte[] size = ByteBuffer.allocate(4).putInt(fileSize).array();
-            Log.d(TAG, "sendOTA_startPacket: 0" + size[0] + " 1:" + size[1] + " 2:" + size[2] + " 3:" + size[3] + " TotalSize:" + fileSize);
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = size[0];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
@@ -774,7 +734,6 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_MSG_TYPE_INDEX] = BT_MSG_HEADER_MSG_TYPE_OTA;
             data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_END;
             byte[] size = ByteBuffer.allocate(4).putInt(fileSize).array();
-            Log.d(TAG, "sendOTA_CompletePacket: 0" + size[0] + " 1:" + size[1] + " 2:" + size[2] + " 3:" + size[3] + " TotalSize:" + fileSize);
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = size[0];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
@@ -787,7 +746,6 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_MSG_TYPE_INDEX] = BT_MSG_HEADER_MSG_TYPE_OTA;
             data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_CONTINUE;
             byte[] size = ByteBuffer.allocate(4).putInt(fileSize).array();
-            //Log.d(TAG, "sendOTA_ProcessPacket: 0" + size[0] + " 1:" + size[1] + " 2:" + size[2] + " 3:" + size[3] + " TotalSize:" + fileSize);
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = size[0];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
@@ -800,11 +758,6 @@ public class MainActivity extends AppCompatActivity {
             Log.e(TAG, "sendOTA_Packet: WRONG OTA PACKETS"+ otaStatus );
         }
         Log.d(TAG, "sendOTA_Packet: Packet Count:"+ otaPacketCount);
-       /* if (characEsp32 == null) {
-            Log.e(TAG, "OTA characEsp32 not found!");
-            return;
-        }*/
-        //characEsp32.setValue(data);
 
         oncharactersticsWriteCount = 1;
         //boolean status1 = mBluetoothGatt.writeCharacteristic(characEsp32);
@@ -816,13 +769,12 @@ public class MainActivity extends AppCompatActivity {
         if (status1) {
             assert data != null;
             //Log.d(TAG, "OTA SENT CHAR: [" + characEsp32.getUuid() + "]:" + bytesToHexString(data));
-            Log.d(TAG, "sendOTA_Packet: DATA WROTE:" + System.currentTimeMillis());
+            //Log.d(TAG, "sendOTA_Packet: DATA WROTE:" + System.currentTimeMillis());
             setLogMessage("", TEXT_OTA_PERCENT);
         } else {
             Log.e(TAG, "writeControlCharacteristic: Failed to write []:" + bytesToHexString(data));
             currentWriteStatus = WRITE_STATUS_FAIL;
         }
-
     }
 
     void startOTAProcess(String filePathOta1) throws InterruptedException {
@@ -831,7 +783,6 @@ public class MainActivity extends AppCompatActivity {
         ota_started_time = 0;
         screenLogMsgforOTA = "";
 
-        //Thread.sleep(100);
         String root = Environment.getExternalStorageDirectory().toString();
         Log.d(TAG, "startOTAProcess: root:"+root);
         String[] localFilePaths= filePathOta1.split(":");
@@ -856,33 +807,15 @@ public class MainActivity extends AppCompatActivity {
         byte[] bytesMtu = new byte[MTU_SIZE];
         Log.d(TAG, "startOTAProcess: FileSize:"+fileSize + " FILE:"+filePathOta);
         sendOTA_Packet(MSG_OTA_START, fileSize, null);
-        //Thread.sleep(500);
+
         int totalBytesSent = 0;
-        boolean validFirmwareVerCheck = false;
+        boolean validFirmwareVerCheck = true;
         try {
             BufferedInputStream buf = new BufferedInputStream(new FileInputStream(filePathOta));
             try {
                 buf.read(fileBytes, 0, fileBytes.length);
                 int bytesOffset = 0;
-                String downloadFwVer = checkDownloadedFirmwareDetails(Arrays.copyOf(fileBytes, 256));
-                downloadFwVer = downloadFwVer.replaceAll("\0+$", "");
-                deviceFirmwareVersion = deviceFirmwareVersion.replaceAll("\0+$", "");
-                Log.d(TAG, "startOTAProcess: DOWNLOADED FW:"+ downloadFwVer );
-                Log.d(TAG, "startOTAProcess: DXE firmware:"+ deviceFirmwareVersion);
 
-                if(deviceFirmwareVersion.equals(downloadFwVer)){
-                    Log.e(TAG, "startOTAProcess:  FIRMWARE MATCHED");
-                    setLogMessage("SAME FIRMWARE VERSIONS \n" +
-                            "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
-                            "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
-                    validFirmwareVerCheck = false;
-                }else{
-                    Log.e(TAG, "startOTAProcess:  FIRMWARE NOT MATCHED");
-                    setLogMessage("LATEST FIRMWARE AVAILABLE \n" +
-                            "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
-                            "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
-                    validFirmwareVerCheck = false;
-                }
                 if(validFirmwareVerCheck == true) {
                     while (totalBytesSent < fileSize) {
                         Log.d(TAG, "startOTAProcess: While START:" + System.currentTimeMillis());
@@ -897,7 +830,6 @@ public class MainActivity extends AppCompatActivity {
                         }
                         ota_current_bytes_transferred = totalBytesSent;
                         bytesOffset = bytesOffset + MTU_SIZE - BT_HEADER_END_INDEX;
-                        //Log.d(TAG, "startOTAProcess: Total Bytes sent:" + totalBytesSent +" bytesToSent:"+bytesToSent);
                         Log.d(TAG, "startOTAProcess: WAIT CALLBACK:" + System.currentTimeMillis());
                         while (true) {
                             if (oncharactersticsWriteCount == 0) break;
@@ -911,14 +843,12 @@ public class MainActivity extends AppCompatActivity {
                         }//while(1)
                         Log.d(TAG, "startOTAProcess: BEFORE SEND:" + System.currentTimeMillis());
                         sendOTA_Packet(MSG_OTA_PROCESS, bytesToSent, bytesMtu);
-                        //Thread.sleep(100);
                         if ((OTA_ERROR_DEFAULT != getOTA_Abort()) || (currentWriteStatus == WRITE_STATUS_FAIL)) {
                             Log.e(TAG, "startOTAProcess: ABORTING OTA");
                             break;
                         }
                     }//while
                 }
-                //Log.d(TAG, "startOTAProcess: DATA:"+bytesToHexString(fileBytes));
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -936,8 +866,21 @@ public class MainActivity extends AppCompatActivity {
                 }//while(1)
                 sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
                 buf.close();
+                while (true) { // Wait for final Success full Write callback
+                    if (oncharactersticsWriteCount == 0) break;
+                    else {
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }//while(1)
+                Log.d(TAG, "startOTAProcess: Wait for DXe Reboot");
+                Message msg = new Message();
+                msg.what = MSG_WAIT_OTA_COMPLETION;
+                mHandler.sendMessage(msg);
             }
-            // Thread.sleep(500);
         } catch (FileNotFoundException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
@@ -1056,6 +999,7 @@ public class MainActivity extends AppCompatActivity {
             }
             long percent = (long) (((float)ota_current_bytes_transferred/(float)ota_total_file_length)*100);
             //Log.d(TAG, "setLogMessage: PERCENTAGE:"+percent);
+            progressBarOTA.setProgress((int)percent);
             float fspeed = (float) 1000 * ((ota_current_bytes_transferred -  ota_delta_data_transferred) / (float)((System.currentTimeMillis()-ota_delta_duration)));
             /*
             Log.d(TAG, "setLogMessage: bytes::" + String.format("%d-%d=%d",
@@ -1083,8 +1027,44 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    String checkDownloadedFirmwareDetails(byte [] value)
-    {
+    String checkDownloadedFirmwareDetails() {
+        String otaFolderPath = null;
+        File otaDir;
+        try {
+             otaFolderPath = Environment.getExternalStorageDirectory().getPath()
+                    + File.separator + "documents/" + File.separator;
+            otaDir = new File(otaFolderPath);
+            if (!otaDir.exists()) {
+                //otaDir.mkdir();
+                otaFolderPath = Environment.getExternalStorageDirectory().getPath()
+                        + File.separator + "Documents/";
+                otaDir = new File(otaFolderPath);
+                if (otaDir.exists()) {
+
+                }
+            }
+        }catch(Exception e){
+            Log.e(TAG, "onClick: " + e);
+        }
+
+        otaFolderPath += "DXe-OTA" + File.separator;
+        otaFolderPath = otaFolderPath + OTA_FILE_NAME;
+        Log.d(TAG, "checkDownloadedFirmwareDetails: OTA file PAth::"+ otaFolderPath);
+        File file = new File(otaFolderPath);
+        int fileSize = (int) file.length();
+
+        byte[] value = new byte[fileSize];
+        try {
+            BufferedInputStream buf = new BufferedInputStream(new FileInputStream(otaFolderPath));
+            try {
+                buf.read(value, 0, value.length);
+            } catch (Exception e) {
+
+            }
+        }catch (Exception e){
+            
+        }
+
         String fw_Details = "";
         int skipByteLen = 4 + 4 + 8 + 32; //int magic word, int secure_ver, int reser[2]
         byte[] bytePayload = new byte[32];
@@ -1205,8 +1185,32 @@ public class MainActivity extends AppCompatActivity {
                 fw_Details += "\nIDF VERSION:"+ strPayload;
                 Log.d(TAG, "processRecvdData: IDF VER:" + strPayload);
                 setLogMessage(fw_Details, TEXT_APPEND);
+                String downloadFwVer = checkDownloadedFirmwareDetails();
+                downloadFwVer = downloadFwVer.replaceAll("\0+$", "");
+                deviceFirmwareVersion = deviceFirmwareVersion.replaceAll("\0+$", "");
+                Log.d(TAG, "startOTAProcess: DOWNLOADED FW:"+ downloadFwVer );
+                Log.d(TAG, "startOTAProcess: DXE firmware:"+ deviceFirmwareVersion);
 
-                startOtaRequestAndFilePath();
+                if(OtaTransferSuccessCheckUpdateStatus == 1){
+                    if(deviceFirmwareVersion.equals(downloadFwVer)){
+                        setLogMessage("OTA : SUCCESS", TEXT_APPEND);
+                    }else{
+                        setLogMessage("OTA : FAILURE,  FW Mismatch", TEXT_APPEND);
+                    }
+                }else {
+                    if(deviceFirmwareVersion.equals(downloadFwVer)){
+                        Log.e(TAG, "startOTAProcess:  FIRMWARE MATCHED");
+                        setLogMessage("SAME FIRMWARE VERSIONS .. Skipping OTA \n" +
+                                "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
+                                "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
+                    }else{
+                        Log.e(TAG, "startOTAProcess:  FIRMWARE NOT MATCHED");
+                        setLogMessage("LATEST FIRMWARE AVAILABLE \n" +
+                                "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
+                                "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
+                        startOtaRequestAndFilePath();
+                    }
+                }
             }
         }else{
             Log.e(TAG, "processRecvdData: Wrong Header");
@@ -1229,37 +1233,6 @@ public class MainActivity extends AppCompatActivity {
                     switch (msg.what){
                         case MSG_SUB_NOTIFY:
                             bluetoothService.setCharacteristicNotification(null, true);
-                          /*  descriptor = characEsp32.getDescriptor(UUID.fromString(WRITE_DESC_UUID));
-                            if (descriptor == null) {
-                                Log.e(TAG, String.format("ERROR: Could not get CCC descriptor for characteristic %s", characEsp32.getUuid()));
-                                return ;
-                            }
-                            Log.d(TAG, "setNotify: notif:"+ mBluetoothGatt.setCharacteristicNotification(characEsp32, true));
-                            byte[] value;
-                            int properties = characEsp32.getProperties();
-                            if ((properties & PROPERTY_NOTIFY) > 0) {
-                                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
-                            } else if ((properties & PROPERTY_INDICATE) > 0) {
-                                value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
-                            } else {
-                                Log.e(TAG, String.format("ERROR: Characteristic %s does not have notify or indicate property", characEsp32.getUuid()));
-                                return ;
-                            }
-                            final byte[] finalValue = true ? value : BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;
-                            // Then write to descriptor
-                            descriptor.setValue(finalValue);
-                            boolean result;
-                            result = mBluetoothGatt.writeDescriptor(descriptor);
-                            Log.d(TAG, "setNotify: " + result);
-                            if(!result)
-
-                            {
-                                Log.e(TAG, String.format("ERROR: writeDescriptor failed for descriptor: %s", descriptor.getUuid()));
-                                //completedCommand();
-                            }else{
-                                Log.d(TAG, "Notification Enabled for "+descriptor.getUuid() + " Val:"+finalValue);
-
-                            }*/
                             break;
                         case MSG_START_TELEMETRY:
                             startTelemetryData(1);
@@ -1279,6 +1252,27 @@ public class MainActivity extends AppCompatActivity {
                             } catch (InterruptedException e) {
                                 Log.e(TAG, "handleMessage: ", e);
                             }
+                            break;
+                        case MSG_START_CONNECTION:
+                            startGATTbacllbackService();
+                            break;
+                        case MSG_WAIT_OTA_COMPLETION:
+                            //Start A 30 Seconds Counter and Try Reconnecting to DXes
+                            bluetoothService.disconnect();
+                            setLogMessage("Waiting 30 Seconds for DXe to Reboot", TEXT_APPEND);
+                            CountDownTimer cnt = new CountDownTimer(30000, 1000) {
+                                @Override
+                                public void onTick(long l) {
+
+                                }
+
+                                @Override
+                                public void onFinish() {
+                                    setLogMessage("Trying to Connect to DXe...", TEXT_APPEND);
+                                    OtaTransferSuccessCheckUpdateStatus = 1;
+                                    bluetoothService.connect(esp32MACAddr);
+                                }
+                            }.start();
                             break;
                     }
                 }
@@ -1326,13 +1320,25 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "onReceive-BroadcastReceiver ACTION:" + action);
             if (BluetoothLeService.ACTION_GATT_CONNECTED.equals(action)) {
                 mConnected = true;
-                setLogMessage("BROADCAST CONNECTED", TEXT_APPEND);
+                setLogMessage("DXE:BLUETOOTH CONNECTED", TEXT_APPEND);
                 btnScan.setText(strDisconnect);
+                Toast.makeText(getApplicationContext(), "DXE Connected", Toast.LENGTH_SHORT).show();
+                btnOTA.setVisibility(View.VISIBLE);
+                btnTelemetry.setVisibility(View.VISIBLE);
+                if(OtaTransferSuccessCheckUpdateStatus == 1){
+                    setLogMessage("OTA: DXe connected.. Checking Firmware", TEXT_APPEND);
+                    Message msg = new Message();
+                    msg.what = MSG_GET_FW_DETAILS;
+                    mHandler.sendMessage(msg);
+                }
             } else if (BluetoothLeService.ACTION_GATT_DISCONNECTED.equals(action)) {
                 mConnected = false;
-                setLogMessage("BROADCAST DIS CONNECTED", TEXT_APPEND);
+                setLogMessage("DXE:BLUETOOTH DISCONNECTED", TEXT_APPEND);
                 btnScan.setText(strConnect);
                 bleScanMacNameMap.clear();
+                Toast.makeText(getApplicationContext(), "DXE DISCONNECTED", Toast.LENGTH_SHORT).show();
+                btnOTA.setVisibility(View.GONE);
+                btnTelemetry.setVisibility(View.GONE);
             }
             else if(BluetoothLeService.ACTION_CHARACTERISTICS_CHANGED.equals(action)){
                 //Log.d(TAG, "onReceive: DATA:"+intent.getStringExtra(BluetoothLeService.EXTRA_DATA));
@@ -1357,18 +1363,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        Log.d(TAG, "onResume: Connect back to the MAC Address ");
+/*        Log.d(TAG, "onResume: Connect back to the MAC Address ");
         registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
         if (bluetoothService != null) {
             final boolean result = bluetoothService.connect(esp32MACAddr);
             Log.d(TAG, "Connect request result=" + result);
-        }
+        }*/
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        unregisterReceiver(gattUpdateReceiver);
+        //unregisterReceiver(gattUpdateReceiver);
     }
     private static IntentFilter makeGattUpdateIntentFilter() {
         final IntentFilter intentFilter = new IntentFilter();
@@ -1383,144 +1389,4 @@ public class MainActivity extends AppCompatActivity {
         return intentFilter;
     }
 
-
-/*    private final BluetoothGattCallback mGattCallback  = new BluetoothGattCallback() {
-        @Override
-        public void onPhyUpdate(BluetoothGatt gatt, int txPhy, int rxPhy, int status) {
-            super.onPhyUpdate(gatt, txPhy, rxPhy, status);
-            Log.d(TAG, "onPhyUpdate: ");
-        }
-
-        @Override
-        public void onPhyRead(BluetoothGatt gatt, int txPhy, int rxPhy, int status) {
-            super.onPhyRead(gatt, txPhy, rxPhy, status);
-            Log.d(TAG, "onPhyRead: ");
-        }
-
-        @Override
-        public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-            super.onConnectionStateChange(gatt, status, newState);
-            Log.d(TAG, "onConnectionStateChange: "+newState);
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                esp32BluetoothStatus = BLUETOOTH_CONNECTED;
-                mBluetoothGatt = gatt;
-                //bluetooth is connected so discover services
-                Log.d(TAG, "onConnectionStateChange bluetooth connected ");
-                mBluetoothGatt.discoverServices();
-                gatt.requestMtu(MTU_SIZE);
-                setLogMessage("DEVICE CONNECTED:"+connectedBluetoothMAC, TEXT_APPEND);
-
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                //Bluetooth is disconnected
-                Log.d(TAG, "onConnectionStateChange bluetooth DISCONNECTED");
-                mBluetoothGatt.close();
-                esp32BluetoothStatus = BLUETOOTH_DISCONNECTED;
-                setLogMessage("DEVICE DISCONNECTED:"+connectedBluetoothMAC, TEXT_APPEND);
-            }
-
-        }
-
-        @Override
-        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-            super.onServicesDiscovered(gatt, status);
-
-            Log.d(TAG, "onServicesDiscovered called:"+status);
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                mBluetoothGatt = gatt;
-                // services are discoverd
-                //Log.d(TAG, "SERVICES DISCOVERED:"+ mBluetoothGatt.getServices());
-                List<BluetoothGattService> services = gatt.getServices();
-                for (BluetoothGattService s : services) {
-                    Log.d(TAG, "onServicesDiscovered: service uuid:"+s.getUuid().toString());
-                }
-                BluetoothGattService Service = mBluetoothGatt.getService(UUID.fromString(WRITE_SERVICE_UUID));
-                List<BluetoothGattCharacteristic>  characteristics = Service.getCharacteristics();
-                for (BluetoothGattCharacteristic ch : characteristics) {
-                    Log.d(TAG, "onServicesDiscovered: characteristics uuid:"+ch.getUuid().toString());
-                }
-                characEsp32 = Service.getCharacteristic(UUID.fromString(WRITE_CHAR_UUID));
-                if (characEsp32 == null) {
-                    Log.e(TAG, "characEsp32 not found!");
-                }
-                List<BluetoothGattDescriptor>  descriptors = characEsp32.getDescriptors();
-                for (BluetoothGattDescriptor desc : descriptors) {
-                    Log.d(TAG, "onServicesDiscovered: descriptors uuid:"+desc.getUuid().toString());
-                }
-            }
-        }
-
-        @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            super.onCharacteristicRead(gatt, characteristic, status);
-            Log.d(TAG, "onCharacteristicRead: ");
-        }
-
-        @Override
-        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            super.onCharacteristicWrite(gatt, characteristic, status);
-            //Log.d(TAG, "onCharacteristicWrite: UUID:"+characteristic.getUuid());
-            Log.d(TAG, "onCharacteristicWrite: CALLBACK:"+System.currentTimeMillis());
-            //Log.d(TAG, "onCharacteristicWrite[" + characteristic.getUuid()+"] Value:"+bytesToHexString(characteristic.getValue()));
-            oncharactersticsWriteCount --;
-        }
-
-        @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-            super.onCharacteristicChanged(gatt, characteristic);
-            Log.d(TAG, "onCharacteristicChanged: VAL:"+bytesToHexString(characteristic.getValue()) );
-            byte [] newValue = characteristic.getValue();
-            StringBuffer result = new StringBuffer();
-            for (byte b : newValue) {
-                result.append(String.format("%02X ", b));
-                result.append(" "); // delimiter
-            }
-            Log.d(TAG, "onCharacteristicChanged[RCVD:"+newValue.length+"]: "+result.toString());
-            Message msg = new Message();
-            msg.what = MSG_PROCESS_BLE_PACKETS;
-            msg.obj = characteristic.getValue();
-            mHandler.sendMessage(msg);
-            //processRecvdData(characteristic.getValue());
-
-        }
-
-        @Override
-        public void onDescriptorRead(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
-            super.onDescriptorRead(gatt, descriptor, status);
-            Log.d(TAG, "onDescriptorRead: ");
-        }
-
-        @Override
-        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
-            super.onDescriptorWrite(gatt, descriptor, status);
-            Log.d(TAG, "onDescriptorWrite: ");
-        }
-
-        @Override
-        public void onReliableWriteCompleted(BluetoothGatt gatt, int status) {
-            super.onReliableWriteCompleted(gatt, status);
-            Log.d(TAG, "onReliableWriteCompleted: ");
-        }
-
-        @Override
-        public void onReadRemoteRssi(BluetoothGatt gatt, int rssi, int status) {
-            super.onReadRemoteRssi(gatt, rssi, status);
-            Log.d(TAG, "onReadRemoteRssi: ");
-        }
-
-        @Override
-        public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
-            super.onMtuChanged(gatt, mtu, status);
-            mBluetoothGatt = gatt;
-            Log.d(TAG, "onMtuChanged: mtu:"+mtu+ " status:"+ status);
-
-            BluetoothGattService Service = mBluetoothGatt.getService(UUID.fromString(WRITE_SERVICE_UUID));
-            characEsp32 = Service.getCharacteristic(UUID.fromString(WRITE_CHAR_UUID));
-            if (characEsp32 == null) {
-                Log.e(TAG, "characEsp32 not found!");
-            }
-            Message msg = new Message();
-            msg.what = MSG_SUB_NOTIFY;
-            mHandler.sendMessage(msg);
-        }
-    };*/
 }
