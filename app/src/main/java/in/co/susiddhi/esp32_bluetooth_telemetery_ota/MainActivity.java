@@ -1,6 +1,8 @@
 package in.co.susiddhi.esp32_bluetooth_telemetery_ota;
 
+import androidx.annotation.LongDef;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -8,6 +10,7 @@ import androidx.core.app.ActivityCompat;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
@@ -20,20 +23,26 @@ import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.CountDownTimer;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.provider.DocumentsContract;
@@ -72,9 +81,10 @@ import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
 public class MainActivity extends AppCompatActivity {
     public static final int PICKFILE_RESULT_CODE = 1;
     private static final int MY_PERMISSION_REQUEST_CODE = 1001;
-    private final static int MTU_SIZE = 464;
+    public final static int MTU_SIZE = 512;
     private final static int TEXT_APPEND = 1;
     private final static int TEXT_NOT_APPEND = 0;
+    private final static int TEXT_OTA_PERCENT = 2;
 
     // Storage Permissions
     private static final int REQUEST_EXTERNAL_STORAGE = 1;
@@ -87,6 +97,9 @@ public class MainActivity extends AppCompatActivity {
 
     private final static String strScanStart = "Scan-START";
     private final static String strScanStop = "Scan-STOP";
+    private final static String strDisconnect = "Disconnect";
+    private final static String strConnect = "Connect";
+
 
     private final static String strTelemetryStart = "Telemetry-Start";
     private final static String strTelemetryStop = "Telemetry-Stop";
@@ -105,6 +118,11 @@ public class MainActivity extends AppCompatActivity {
     private Uri otaFileUri;
     private String otaFilePath;
     //***** Bluetooth  Details ****
+    private static final long SCAN_PERIOD = 30000;
+    private Handler handlerScanner = new Handler();
+    Map<String, String> bleScanMacNameMap = new HashMap<>();
+    private String screenLogMsgforOTA = "";
+    long ota_started_time = 0;
     private final static int REQUEST_ENABLE_BT = 1;
     private static final int PERMISSION_REQUEST_COARSE_LOCATION = 1;
     BluetoothManager btManager;
@@ -145,6 +163,16 @@ public class MainActivity extends AppCompatActivity {
     public static  final int  BT_MSG_HEADER_MSG_ACTION_START      =       0x01;
     public static  final int  BT_MSG_HEADER_MSG_ACTION_CONTINUE   =       0x02;
     public static  final int  BT_MSG_HEADER_MSG_ACTION_END        =       0x03;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_ABORT      =       0x04;
+
+    public static  final int  OTA_ERROR_DEFAULT                   =       0;
+    public static  final int  OTA_ERROR_CODE_INTERNAL_ERROR       =       0x1000;
+    public static  final int  OTA_ERROR_CODE_INVALID_CHECKSUM     =       0x1001;
+    public static  final int  OTA_ERROR_CODE_INVALID_FW_VER       =       0x1002;
+    public static  final int  OTA_ERROR_CODE_INVALID_HEADER       =       0x1003;
+    public static  final int  OTA_ERROR_CODE_INVALID_FILESIZE     =       0x1004;
+    public static  final int  OTA_ERROR_CODE_SAME_FW_VER          =       0x1005;
+
     public static  final int MSG_OTA_START                        =       0x12EC;
     public static  final int MSG_OTA_PROCESS	                  =       0x12ED;
     public static  final int MSG_OTA_COMPLETE                     =       0x12EF;
@@ -153,9 +181,24 @@ public class MainActivity extends AppCompatActivity {
     public static  final int BLUETOOTH_DISCONNECTED = 2;
     private int esp32BluetoothStatus = 0;
     private int bleScanCount = 0;
+    private int abortOTAProcess = 0;
+    private String deviceAddress;
 
+
+    void setOTA_Abort(int value){
+        abortOTAProcess = value;
+    }
+    int getOTA_Abort(){
+        return abortOTAProcess;
+    }
     int currentWriteStatus = 0;
     CountDownTimer scannerTimer = null;
+
+    long ota_total_file_length = 0;
+    long ota_current_bytes_transferred = 0;
+    long ota_delta_data_transferred = 0, ota_delta_duration = 0;
+    int oncharactersticsWriteCount = 0;
+
     //***** Bluetooth  Details ****
     SharedPreferences sharedPreferences = null;
     String PREF_MAC_KEY =  "in.co.susiddhi.esp32_ble_tele_ota_MAC";
@@ -233,7 +276,6 @@ public class MainActivity extends AppCompatActivity {
         };
         editTextMAC.setFilters(macAddressFilters);
 
-
         btnScan.setText(strScanStart);
         btnOTA.setText(strOtaStart);
         btnTelemetry.setText(strTelemetryStart);
@@ -241,28 +283,55 @@ public class MainActivity extends AppCompatActivity {
         btnOTA.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(esp32BluetoothStatus == BLUETOOTH_DISCONNECTED){
+                setOTA_Abort(OTA_ERROR_DEFAULT);
+                String otaFolderPath = "";
+                File otaDir = null;
+                try {
+                    otaFolderPath = Environment.getExternalStorageDirectory().getPath()
+                            + File.separator + "documents/" + File.separator;
+                    otaDir = new File(otaFolderPath);
+                    if (!otaDir.exists()) {
+                        //otaDir.mkdir();
+                        otaFolderPath = Environment.getExternalStorageDirectory().getPath()
+                                + File.separator + "Documents/";
+                        otaDir = new File(otaFolderPath);
+                        if (otaDir.exists()) {
+
+                        }
+                    }
+                }catch(Exception e){
+                    Log.e(TAG, "onClick: " + e);
+                }
+                if(mConnected == false){
                     setLogMessage("Device not Connected !!!", TEXT_APPEND);
-                    //return;
+                    return;
                 }
                 setLogMessage("OTA TODO", TEXT_APPEND);
                 Log.d(TAG, "onClick: OTA Click");
 
-                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                //Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                //intent.addCategory(Intent.CATEGORY_OPENABLE);
                 //Intent intent = new Intent(Intent.ACTION_PICK);
-                String otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                        +  File.separator +"documents/" +"DXe-OTA" + File.separator;
-                File otaDir = new File(otaFolderPath);
+                otaFolderPath += "DXe-OTA" + File.separator;
+                Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
+
+                otaDir = new File(otaFolderPath);
+                if(!otaDir.exists()){
+                    otaDir.mkdir();
+                }
                 File[] files = otaDir.listFiles();
-                Log.d("Files", "Size: "+ files.length);
-                for (int i = 0; i < files.length; i++)
+                int filesFound = 0;
+                if(files != null){
+                    filesFound = files.length;
+                }
+                Log.d("Files", "Size: "+ filesFound);
+                for (int i = 0; i < filesFound; i++)
                 {
                     Log.d("Files", "FileName:" + files[i].getName());
                     Log.d(TAG, "onClick: path:"+ files[i].getPath() + " Can Read:"+ files[i].canRead());
                     Log.d(TAG, "onClick: file len:"+ files[i].length());
                 }
-                if(files.length == 0) {
+                if(filesFound == 0) {
                     setLogMessage("Copy OTA File to  below location and Start Again:" + otaFolderPath, TEXT_APPEND);
                 }else {
                     Message msg = new Message();
@@ -324,7 +393,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View v) {
                 Log.d("TAG", "btnTelemetryt onClick: " + intTelemetryStarted);
-                if(esp32BluetoothStatus == BLUETOOTH_DISCONNECTED){
+                if(mConnected == false){
                     setLogMessage("Device not Connected !!!", TEXT_APPEND);
                     return;
                 }
@@ -351,12 +420,13 @@ public class MainActivity extends AppCompatActivity {
         btnScan.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
-                if(mBluetoothGatt != null) {
+                /*if(mBluetoothGatt != null) {
                     mBluetoothGatt.disconnect();
                     Log.d(TAG, "onLongClick: DISCONNECTING BLE");
                 }
                 setLogMessage("Clearing..", TEXT_NOT_APPEND);
-                stopScanning();
+                stopScanning();*/
+                bluetoothService.disconnect();
                 Toast.makeText(getApplicationContext(), "DISCONNECTING BLE", Toast.LENGTH_SHORT).show();
                 Log.d(TAG, "onLongClick: DISCONNECT BLE END ");
                 return false;
@@ -365,6 +435,10 @@ public class MainActivity extends AppCompatActivity {
         btnScan.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if(mConnected == true){
+                    bluetoothService.disconnect();
+                    return;
+                }
                 bleScanCount = 0;
                 String mac = editTextMAC.getText().toString();
                 if(intScanning == 0) {
@@ -412,10 +486,7 @@ public class MainActivity extends AppCompatActivity {
                     setLogMessage("Scanning Stopped...", TEXT_APPEND);
                     setLogMessage("Device Found:"+bleScanCount, TEXT_APPEND);
                     stopScanning();
-
-
                 }
-
             }
         });
 
@@ -423,6 +494,7 @@ public class MainActivity extends AppCompatActivity {
         esp32MessageHandler();
         verifyStoragePermissions(MainActivity.this);
     }//OnCreate
+
 
     public String getPath1(Uri uri) {
 
@@ -476,28 +548,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    void updateTelemetryButtonOnFailure(int startFailed)
-    {
-        if(startFailed == 1){
-            //Start has failed, rollback
-            btnTelemetry.setText(strTelemetryStart);
-            setLogMessage("Telemetry Start: Message failed", TEXT_APPEND);
-            intTelemetryStarted = 0;
-        }
-        else{
-            btnTelemetry.setText(strTelemetryStop);
-            setLogMessage("Telemetry Stop: Failed", TEXT_APPEND);
-            intTelemetryStarted = 1;
-        }
-    }
+    /********* PERMISSIONS ENDS **********/
 
-    /**
-     * Checks if the app has permission to write to device storage
-     *
-     * If the app does not has permission then the user will be prompted to grant permissions
-     *
-     * @param activity
-     */
     public static void verifyStoragePermissions(Activity activity) {
         // Check if we have write permission
         int permission = ActivityCompat.checkSelfPermission(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE);
@@ -511,6 +563,118 @@ public class MainActivity extends AppCompatActivity {
             );
         }
     }
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           String permissions[], int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        //if(grantResults.length == 0) return;
+        Log.d(TAG, "onRequestPermissionsResult: requestCode:"+ requestCode + " grantResults.length:"+grantResults.length);
+        switch (requestCode) {
+            case MY_PERMISSION_REQUEST_CODE:
+                if(grantResults.length > 0 && grantResults[0] ==
+                        PackageManager.PERMISSION_GRANTED)
+                    //Do your work
+                    Log.d(TAG, "onRequestPermissionsResult: STORAGE access granted");
+                    break;
+            case PERMISSION_REQUEST_COARSE_LOCATION: {
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Log.d(TAG, ("coarse location permission granted"));
+                } else {
+                    final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+                    builder.setTitle("Functionality limited");
+                    builder.setMessage("Since location access has not been granted, this app will not be able to discover beacons when in the background.");
+                    builder.setPositiveButton(android.R.string.ok, null);
+                    builder.setOnDismissListener(new DialogInterface.OnDismissListener() {
+
+                        @Override
+                        public void onDismiss(DialogInterface dialog) {
+                        }
+
+                    });
+                    builder.show();
+                }
+                return;
+            }
+        }
+    }
+
+    /********* PERMISSIONS ENDS **********/
+
+
+    /******* SCANNING STARTS ***************/
+
+    // Device scan callback.
+    private ScanCallback leScanCallback = new ScanCallback() {
+        @Override
+        public void onScanResult(int callbackType, ScanResult result) {
+            //setLogMessage("Device Name: " + result.getDevice().getName()+" MAC:" +result.getDevice().getAddress()+ " rssi: " + result.getRssi(), TEXT_APPEND);
+            boolean res = bleScanMacNameMap.containsKey(result.getDevice().getAddress());
+            Log.d(TAG, "onScanResult: res:"+ res);
+            if(res == false) {
+                bleScanMacNameMap.put(result.getDevice().getAddress(), result.getDevice().getName());
+                setLogMessage("Device Name: " + result.getDevice().getName() + " MAC:" + result.getDevice().getAddress(), TEXT_APPEND);
+                setLogMessage("", TEXT_APPEND);
+                bleScanCount++;
+                Log.d("BLE SCANING", "Device Name: " + result.getDevice().getName() + " MAC:" + result.getDevice().getAddress() + " rssi: " + result.getRssi());
+            }
+            if(result.getDevice().getAddress().equalsIgnoreCase(esp32MACAddr))
+            {
+                scannerTimer.cancel();
+                setLogMessage("Device Found:"+bleScanCount, TEXT_APPEND);
+                btnScan.setText(strScanStart);
+                stopScanning();
+                startGATTbacllbackService();
+
+               /* myDevice = result.getDevice();
+                Toast.makeText(getApplicationContext(), "FOUND Device:"+ myDevice.getName() + "="+myDevice.getAddress(), Toast.LENGTH_SHORT).show();
+                setLogMessage("Connecting to Device :"+myDevice.getAddress(), TEXT_APPEND);
+                Log.d(TAG, "LIST of UUIDs:"+ myDevice.getUuids());
+                scannerTimer.cancel();
+                mBluetoothGatt = myDevice.connectGatt(getApplicationContext(), false, mGattCallback);
+                Log.d(TAG, "Trying to create a new connection.");
+                connectedBluetoothMAC = myDevice.getAddress();
+                connectedBluetoothName = myDevice.getName();
+                mBluetoothGatt.connect();
+                stopScanning();*/
+            }else{
+                Log.d(TAG, "NOT MATCHED:"+result.getDevice().getAddress() +"!="+ esp32MACAddr);
+            }
+        }
+
+        @Override
+        public void onScanFailed(int errorCode) {
+            super.onScanFailed(errorCode);
+            Log.d(TAG, "onScanFailed: ");
+        }
+    };
+
+    public void startScanning() {
+        Log.d(TAG,("start scanning"));
+        // Stops scanning after a predefined scan period.
+        handlerScanner.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+
+                btScanner.stopScan(leScanCallback);
+            }
+        }, SCAN_PERIOD);
+        btScanner.startScan(leScanCallback);
+    }
+
+    public void stopScanning() {
+        Log.d(TAG,("stopping scanning"));
+        bleScanMacNameMap.clear();
+        btScanner.stopScan(leScanCallback);
+        AsyncTask.execute(new Runnable() {
+            @Override
+            public void run() {
+                btScanner.stopScan(leScanCallback);
+            }
+        });
+    }
+    /******* SCANNING ENDS ***************/
+
+    /************** OTA STARTS *****************/
     long otaStartTime = 0;
     long otaPacketCount = 0;
     void sendOTA_Packet(int otaStatus, int fileSize, byte[] fileData)
@@ -530,6 +694,7 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
             data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
+
         }else if(otaStatus == MSG_OTA_COMPLETE){
             otaPacketCount++;
             long otaEndtime = System.currentTimeMillis();
@@ -553,7 +718,7 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_MSG_TYPE_INDEX] = BT_MSG_HEADER_MSG_TYPE_OTA;
             data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_CONTINUE;
             byte[] size = ByteBuffer.allocate(4).putInt(fileSize).array();
-            Log.d(TAG, "sendOTA_ProcessPacket: 0" + size[0] + " 1:" + size[1] + " 2:" + size[2] + " 3:" + size[3] + " TotalSize:" + fileSize);
+            //Log.d(TAG, "sendOTA_ProcessPacket: 0" + size[0] + " 1:" + size[1] + " 2:" + size[2] + " 3:" + size[3] + " TotalSize:" + fileSize);
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = size[0];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
@@ -566,21 +731,32 @@ public class MainActivity extends AppCompatActivity {
             Log.e(TAG, "sendOTA_Packet: WRONG OTA PACKETS"+ otaStatus );
         }
         Log.d(TAG, "sendOTA_Packet: Packet Count:"+ otaPacketCount);
-        if (characEsp32 == null) {
+       /* if (characEsp32 == null) {
             Log.e(TAG, "OTA characEsp32 not found!");
             return;
-        }
-        characEsp32.setValue(data);
-        boolean status1 = mBluetoothGatt.writeCharacteristic(characEsp32);
+        }*/
+        //characEsp32.setValue(data);
+
+        oncharactersticsWriteCount = 1;
+        //boolean status1 = mBluetoothGatt.writeCharacteristic(characEsp32);
+        boolean status1 = bluetoothService.writeCharacteristics(characEsp32, data);
         if (status1) {
-            Log.d(TAG, "SENT CHAR: [" + characEsp32.getUuid() + "]:" + bytesToHexString(data));
+            assert data != null;
+            //Log.d(TAG, "OTA SENT CHAR: [" + characEsp32.getUuid() + "]:" + bytesToHexString(data));
+            Log.d(TAG, "sendOTA_Packet: DATA WROTE:" + System.currentTimeMillis());
+            setLogMessage("", TEXT_OTA_PERCENT);
         } else {
-            Log.e(TAG, "writeControlCharacteristic: Failed to write [" + characEsp32.getUuid() + "]:" + bytesToHexString(data));
+            Log.e(TAG, "writeControlCharacteristic: Failed to write []:" + bytesToHexString(data));
             currentWriteStatus = WRITE_STATUS_FAIL;
         }
+
     }
 
     void startOTAProcess(String filePathOta1) throws InterruptedException {
+        ota_total_file_length = 0;
+        ota_current_bytes_transferred = 0;
+        ota_started_time = 0;
+        screenLogMsgforOTA = "";
 
         //Thread.sleep(100);
         String root = Environment.getExternalStorageDirectory().toString();
@@ -601,11 +777,13 @@ public class MainActivity extends AppCompatActivity {
         filePathOta = filePathOta1 + OTA_FILE_NAME;
         File file = new File(filePathOta);
         int fileSize = (int) file.length();
+        ota_total_file_length = fileSize;
+        currentWriteStatus = WRITE_STATUS_DEFAULT;
         byte[] fileBytes = new byte[fileSize];
         byte[] bytesMtu = new byte[MTU_SIZE];
         Log.d(TAG, "startOTAProcess: FileSize:"+fileSize + " FILE:"+filePathOta);
         sendOTA_Packet(MSG_OTA_START, fileSize, null);
-        Thread.sleep(3000);
+        //Thread.sleep(500);
         int totalBytesSent = 0;
         try {
             BufferedInputStream buf = new BufferedInputStream(new FileInputStream(filePathOta));
@@ -614,6 +792,7 @@ public class MainActivity extends AppCompatActivity {
                 int bytesOffset = 0;
 
                 while(totalBytesSent < fileSize) {
+                    Log.d(TAG, "startOTAProcess: While START:"+System.currentTimeMillis());
                     int bytesToSent = 0;
                     for (int i = 0; i < MTU_SIZE-BT_HEADER_END_INDEX; i++) {
                         if((bytesOffset + i) >= fileSize){
@@ -623,20 +802,36 @@ public class MainActivity extends AppCompatActivity {
                         bytesToSent++;
                         totalBytesSent++;
                     }
+                    ota_current_bytes_transferred = totalBytesSent;
                     bytesOffset = bytesOffset + MTU_SIZE-BT_HEADER_END_INDEX;
-                    Log.d(TAG, "startOTAProcess: Total Bytes sent:" + totalBytesSent +" bytesToSent:"+bytesToSent);
+                    //Log.d(TAG, "startOTAProcess: Total Bytes sent:" + totalBytesSent +" bytesToSent:"+bytesToSent);
+                    Log.d(TAG, "startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
+                    while(true)
+                    {
+                        if(oncharactersticsWriteCount  == 0) break;
+                        else{
+                            try {
+                                Thread.sleep(1);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                    }//while(1)
+                    Log.d(TAG, "startOTAProcess: BEFORE SEND:"+System.currentTimeMillis());
                     sendOTA_Packet(MSG_OTA_PROCESS, bytesToSent, bytesMtu);
-                    Thread.sleep(2000);
+                    //Thread.sleep(100);
+                    if((OTA_ERROR_DEFAULT != getOTA_Abort()) || (currentWriteStatus == WRITE_STATUS_FAIL)){
+                        Log.e(TAG, "startOTAProcess: ABORTING OTA");
+                        break;
+                    }
                 }//while
                 //Log.d(TAG, "startOTAProcess: DATA:"+bytesToHexString(fileBytes));
             } catch (IOException e) {
                 e.printStackTrace();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
             }
             sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
             buf.close();
-            Thread.sleep(5000);
+            // Thread.sleep(500);
         } catch (FileNotFoundException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
@@ -647,17 +842,318 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "startOTAProcess: OTA PROCESS COMPLETES ************");
     }
 
+    /************** OTA ENDS ********************/
+
+
+    /******* TELEMETRY STARTS ***************/
+
+    void updateTelemetryButtonOnFailure(int startFailed)
+    {
+        if(startFailed == 1){
+            //Start has failed, rollback
+            btnTelemetry.setText(strTelemetryStart);
+            setLogMessage("Telemetry Start: Message failed", TEXT_APPEND);
+            intTelemetryStarted = 0;
+        }
+        else{
+            btnTelemetry.setText(strTelemetryStop);
+            setLogMessage("Telemetry Stop: Failed", TEXT_APPEND);
+            intTelemetryStarted = 1;
+        }
+    }
+    
+    public  boolean startTelemetryData(int start) {
+
+        byte[] data = new byte[BT_HEADER_END_INDEX+1];
+        if(1 == start) {
+            data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
+            data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
+            data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_START;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = 0;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = 0;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
+            data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
+        }else{
+            data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
+            data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
+            data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_END;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = 0;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = 0;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
+            data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
+        }
+        boolean status1 = bluetoothService.writeCharacteristics(characEsp32, data);
+        if (status1) {
+            Log.d(TAG, "TELE SENT:" +bytesToHexString(data));
+        } else{
+            Log.e(TAG, "startTelemetryData writeControlCharacteristic: Failed to write []:" + bytesToHexString(data));
+            currentWriteStatus = WRITE_STATUS_FAIL;
+            updateTelemetryButtonOnFailure(start);
+        }
+        return status1;
+    }
+
+    /******* TELEMETRY ENDS ***************/
+    public  String bytesToHexString(byte[] data){
+        StringBuffer result = new StringBuffer();
+        for (byte b : data) {
+            result.append(String.format("%02X ", b));
+            result.append(" "); // delimiter
+        }
+        return result.toString();
+    }
+    public  String bytesToHexString(short[] data){
+        StringBuffer result = new StringBuffer();
+        for (short b : data) {
+            result.append(String.format("%02X ", b));
+            result.append(" "); // delimiter
+        }
+        return result.toString();
+    }
+
+
     void setLogMessage(String Message, int append){
         String currMsg = textViewLog.getText().toString()+"\n";
         //Log.d(TAG, "setLogMessage: "+Message);
         if(append == TEXT_APPEND) {
             textViewLog.setText(currMsg + Message);
-        }else{
+        }else if(append == TEXT_OTA_PERCENT){
+            if(screenLogMsgforOTA.length() == 0){
+                ota_started_time = System.currentTimeMillis();
+                screenLogMsgforOTA = currMsg;
+            }
+            long percent = (long) (((float)ota_current_bytes_transferred/(float)ota_total_file_length)*100);
+            //Log.d(TAG, "setLogMessage: PERCENTAGE:"+percent);
+            float fspeed = (float) 1000 * ((ota_current_bytes_transferred -  ota_delta_data_transferred) / (float)((System.currentTimeMillis()-ota_delta_duration)));
+            /*
+            Log.d(TAG, "setLogMessage: bytes::" + String.format("%d-%d=%d",
+                    ota_current_bytes_transferred, ota_delta_data_transferred, (ota_current_bytes_transferred -  ota_delta_data_transferred)));
+            Log.d(TAG, "setLogMessage: Time:"+ String.format("%d=%d",
+                    ota_delta_duration, ((System.currentTimeMillis()-ota_delta_duration)/1000)));
+             */
+            /*
+            Log.d(TAG, "setLogMessage:Delta Transfer:"
+                    +((ota_current_bytes_transferred -  ota_delta_data_transferred))+ " SPEED:" + fspeed
+                    + " Time Delta:" + (System.currentTimeMillis()-ota_delta_duration));
+                    */
+
+            long speed = (long)fspeed;
+            String strOtaProgress = String.format("Bytes Transferred:%d/%d=%d \nTransfer Speed:%d Bytes/Sec \nTime:%d Seconds",
+                    ota_current_bytes_transferred, ota_total_file_length, percent, speed, (int)(System.currentTimeMillis() - ota_started_time)/1000);
+
+            textViewLog.setText(screenLogMsgforOTA + strOtaProgress);
+            ota_delta_duration = System.currentTimeMillis();
+            ota_delta_data_transferred = ota_current_bytes_transferred;
+        }
+        else{
             textViewLog.setText(Message);
         }
     }
 
-    private final BluetoothGattCallback mGattCallback  = new BluetoothGattCallback() {
+    private void processRecvdData(byte[] value) {
+
+        for(int i = 0; i< value.length; i++){
+            // Log.d(TAG, "processRecvdData: "+i+":"+value[i]);
+            value[i] = (byte) (value[i] & 0xFF);
+        }
+        Log.d(TAG, "processRecvdData: "+String.format("%x %x %x %x %x %x %x %x", value[0], value[1],value[2],value[3],value[4],value[5],value[6],value[7]));
+
+        if(((value[BT_HEADER_START_INDEX] & 0XFF) == BT_MSG_HEADER_FIRST_BYTE) &&  ((value[BT_HEADER_END_INDEX] & 0xFF)== BT_MSG_HEADER_LAST_BYTE)){
+            if((value[BT_HEADER_MSG_TYPE_INDEX] == BT_MSG_HEADER_MSG_TYPE_TELEMETRY) && (value[BT_HEADER_MSG_ACTION_INDEX] == BT_MSG_HEADER_MSG_ACTION_CONTINUE)){
+                int length_recvd = (value[BT_HEADER_PAYLOAD_LENGTH_INDEX2] | (value[BT_HEADER_PAYLOAD_LENGTH_INDEX3] << 8)) ;
+                Log.d(TAG, "processRecvdData: len:"+ value.length);
+                byte[] bytePayload = new byte[length_recvd];
+                for (int  i  = 0; i < (length_recvd); i++){
+                    bytePayload[i] = value[BT_HEADER_END_INDEX+1+i];
+                }
+                String strPayload = new String(bytePayload);
+                strPayload = strPayload.trim();
+                Date date = new Date();
+                Log.d(TAG, "processRecvdData:"+date+": TELEMETRY LEN:"+length_recvd+" DATA:"+strPayload);
+                setLogMessage("TELEMETRY["+length_recvd+"]:\n"+strPayload, TEXT_APPEND);
+            }else if((value[BT_HEADER_MSG_TYPE_INDEX] == BT_MSG_HEADER_MSG_TYPE_OTA) && (value[BT_HEADER_MSG_ACTION_INDEX] == BT_MSG_HEADER_MSG_ACTION_ABORT))
+            {
+                Log.e(TAG, "processRecvdData: OTA ABORT MESSAGE");
+                int errorCode =  (value[BT_HEADER_END_INDEX+1] | (value[BT_HEADER_END_INDEX+2] << 8)) ;
+                Log.e(TAG, "processRecvdData: Error Code"+ String.format("%x", errorCode));
+                setOTA_Abort(OTA_ERROR_CODE_INTERNAL_ERROR);
+            }
+        }else{
+            Log.e(TAG, "processRecvdData: Wrong Header");
+        }
+    }
+    /******************* Message Handler ************************/
+    Handler mHandler = null;
+    BluetoothGattDescriptor descriptor = null;
+    void esp32MessageHandler() {
+        HandlerThread handlerThread = new HandlerThread("esp32BluetoothHandler");
+        handlerThread.start();
+        Looper looper = handlerThread.getLooper();
+
+        if (mHandler == null) {
+            mHandler = new Handler(looper) {
+                @Override
+                public void handleMessage(@NonNull Message msg) {
+                    super.handleMessage(msg);
+                    Log.d(TAG, "handleMessage: Message msgId:"+msg.what);
+                    switch (msg.what){
+                        case MSG_SUB_NOTIFY:
+                            bluetoothService.setCharacteristicNotification(null, true);
+                          /*  descriptor = characEsp32.getDescriptor(UUID.fromString(WRITE_DESC_UUID));
+                            if (descriptor == null) {
+                                Log.e(TAG, String.format("ERROR: Could not get CCC descriptor for characteristic %s", characEsp32.getUuid()));
+                                return ;
+                            }
+                            Log.d(TAG, "setNotify: notif:"+ mBluetoothGatt.setCharacteristicNotification(characEsp32, true));
+                            byte[] value;
+                            int properties = characEsp32.getProperties();
+                            if ((properties & PROPERTY_NOTIFY) > 0) {
+                                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
+                            } else if ((properties & PROPERTY_INDICATE) > 0) {
+                                value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
+                            } else {
+                                Log.e(TAG, String.format("ERROR: Characteristic %s does not have notify or indicate property", characEsp32.getUuid()));
+                                return ;
+                            }
+                            final byte[] finalValue = true ? value : BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;
+                            // Then write to descriptor
+                            descriptor.setValue(finalValue);
+                            boolean result;
+                            result = mBluetoothGatt.writeDescriptor(descriptor);
+                            Log.d(TAG, "setNotify: " + result);
+                            if(!result)
+
+                            {
+                                Log.e(TAG, String.format("ERROR: writeDescriptor failed for descriptor: %s", descriptor.getUuid()));
+                                //completedCommand();
+                            }else{
+                                Log.d(TAG, "Notification Enabled for "+descriptor.getUuid() + " Val:"+finalValue);
+
+                            }*/
+                            break;
+                        case MSG_START_TELEMETRY:
+                            startTelemetryData(1);
+                            break;
+                        case MSG_STOP_TELEMETRY:
+                            startTelemetryData(2);
+                            break;
+                        case MSG_PROCESS_BLE_PACKETS:
+                            processRecvdData((byte[])msg.obj);
+                            break;
+                        case MSG_PROCESS_START_OTA:
+                            try {
+                                startOTAProcess((String) msg.obj);
+                            } catch (InterruptedException e) {
+                                Log.e(TAG, "handleMessage: ", e);
+                            }
+                            break;
+                    }
+                }
+            };
+        }
+    }//esp32MessageHandler
+
+
+    /***** SERVICE **/
+
+    private BluetoothLeService bluetoothService;
+
+    void startGATTbacllbackService()
+    {
+        Intent gattServiceIntent = new Intent(this, BluetoothLeService.class);
+        bindService(gattServiceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+    }
+    private ServiceConnection serviceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            bluetoothService = ((BluetoothLeService.LocalBinder) service).getService();
+            Log.d(TAG, "onServiceConnected: ");
+            if (bluetoothService != null) {
+                // call functions on service to check connection and connect to devices
+                if (!bluetoothService.initialize()) {
+                    Log.e(TAG, "Unable to initialize Bluetooth");
+                    finish();
+                }
+                // perform device connection
+                bluetoothService.connect(esp32MACAddr);
+            }
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            bluetoothService = null;
+            Log.e(TAG, "onServiceDisconnected: " );
+        }
+    };
+    private boolean mConnected;
+    private final BroadcastReceiver gattUpdateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            final String action = intent.getAction();
+            Log.d(TAG, "onReceive-BroadcastReceiver ACTION:" + action);
+            if (BluetoothLeService.ACTION_GATT_CONNECTED.equals(action)) {
+                mConnected = true;
+                setLogMessage("BROADCAST CONNECTED", TEXT_APPEND);
+                btnScan.setText(strDisconnect);
+            } else if (BluetoothLeService.ACTION_GATT_DISCONNECTED.equals(action)) {
+                mConnected = false;
+                setLogMessage("BROADCAST DIS CONNECTED", TEXT_APPEND);
+                btnScan.setText(strConnect);
+                bleScanMacNameMap.clear();
+            }
+            else if(BluetoothLeService.ACTION_CHARACTERISTICS_CHANGED.equals(action)){
+                //Log.d(TAG, "onReceive: DATA:"+intent.getStringExtra(BluetoothLeService.EXTRA_DATA));
+                byte[] extras = intent.getByteArrayExtra(BluetoothLeService.EXTRA_DATA);
+                Message msg = new Message();
+                msg.what = MSG_PROCESS_BLE_PACKETS;
+                msg.obj = extras;
+                mHandler.sendMessage(msg);
+            }
+            else if(BluetoothLeService.ACTION_GATT_SERVICES_DISCOVERED.equals(action)){
+
+            }
+            else if(BluetoothLeService.ACTION_DATA_WRITE_CALLBACK.equals(action)){
+                oncharactersticsWriteCount--;
+            }else if(BluetoothLeService.ACTION_MTU_CHANGED.equals(action)){
+                Message msg = new Message();
+                msg.what = MSG_SUB_NOTIFY;
+                mHandler.sendMessage(msg);
+            }
+        }
+    };
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Log.d(TAG, "onResume: Connect back to the MAC Address ");
+        registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+        if (bluetoothService != null) {
+            final boolean result = bluetoothService.connect(esp32MACAddr);
+            Log.d(TAG, "Connect request result=" + result);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        unregisterReceiver(gattUpdateReceiver);
+    }
+    private static IntentFilter makeGattUpdateIntentFilter() {
+        final IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(BluetoothLeService.ACTION_GATT_CONNECTED);
+        intentFilter.addAction(BluetoothLeService.ACTION_GATT_DISCONNECTED);
+        intentFilter.addAction(BluetoothLeService.ACTION_CHARACTERISTICS_CHANGED);
+        intentFilter.addAction(BluetoothLeService.ACTION_DATA_AVAILABLE);
+        intentFilter.addAction(BluetoothLeService.ACTION_GATT_CONNECTED);
+        intentFilter.addAction(BluetoothLeService.ACTION_DATA_WRITE_CALLBACK);
+        intentFilter.addAction(BluetoothLeService.ACTION_MTU_CHANGED);
+        intentFilter.addAction(BluetoothLeService.ACTION_GATT_SERVICES_DISCOVERED);
+        return intentFilter;
+    }
+
+
+/*    private final BluetoothGattCallback mGattCallback  = new BluetoothGattCallback() {
         @Override
         public void onPhyUpdate(BluetoothGatt gatt, int txPhy, int rxPhy, int status) {
             super.onPhyUpdate(gatt, txPhy, rxPhy, status);
@@ -719,8 +1215,6 @@ public class MainActivity extends AppCompatActivity {
                 for (BluetoothGattDescriptor desc : descriptors) {
                     Log.d(TAG, "onServicesDiscovered: descriptors uuid:"+desc.getUuid().toString());
                 }
-
-
             }
         }
 
@@ -733,8 +1227,10 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             super.onCharacteristicWrite(gatt, characteristic, status);
-            Log.d(TAG, "onCharacteristicWrite: UUID:"+characteristic.getUuid());
-            Log.d(TAG, "onCharacteristicWrite called:"+status + " Value:"+bytesToHexString(characteristic.getValue()));
+            //Log.d(TAG, "onCharacteristicWrite: UUID:"+characteristic.getUuid());
+            Log.d(TAG, "onCharacteristicWrite: CALLBACK:"+System.currentTimeMillis());
+            //Log.d(TAG, "onCharacteristicWrite[" + characteristic.getUuid()+"] Value:"+bytesToHexString(characteristic.getValue()));
+            oncharactersticsWriteCount --;
         }
 
         @Override
@@ -795,262 +1291,5 @@ public class MainActivity extends AppCompatActivity {
             msg.what = MSG_SUB_NOTIFY;
             mHandler.sendMessage(msg);
         }
-    };
-
-    private void processRecvdData(byte[] value) {
-
-        for(int i = 0; i< value.length; i++){
-           // Log.d(TAG, "processRecvdData: "+i+":"+value[i]);
-            value[i] = (byte) (value[i] & 0xFF);
-        }
-        Log.d(TAG, "processRecvdData: "+String.format("%x %x %x %x %x %x %x %x", value[0], value[1],value[2],value[3],value[4],value[5],value[6],value[7]));
-
-        if(((value[BT_HEADER_START_INDEX] & 0XFF) == BT_MSG_HEADER_FIRST_BYTE) &&  ((value[BT_HEADER_END_INDEX] & 0xFF)== BT_MSG_HEADER_LAST_BYTE)){
-            if((value[BT_HEADER_MSG_TYPE_INDEX] == 0x10) && (value[BT_HEADER_MSG_ACTION_INDEX] == 0x02)){
-                int len = (value[BT_HEADER_PAYLOAD_LENGTH_INDEX2] | (value[BT_HEADER_PAYLOAD_LENGTH_INDEX3] << 8)) ;
-                Log.d(TAG, "processRecvdData: len:"+ value.length);
-                byte[] bytePayload = new byte[value.length-5];
-                for (int  i  = 0; i< (value.length-6); i++){
-                    bytePayload[i] = value[6+i];
-                }
-                String strPayload = new String(bytePayload);
-                strPayload = strPayload.trim();
-                Date date = new Date();
-                Log.d(TAG, "processRecvdData:"+date+": TELEMETRY LEN:"+len+" DATA:"+strPayload);
-                setLogMessage("TELEMETRY:"+strPayload, TEXT_APPEND);
-            }
-        }else{
-            Log.e(TAG, "processRecvdData: Wrong Header");
-        }
-    }
-    Map<String, String> bleScanMacNameMap = new HashMap<>();
-    // Device scan callback.
-    private ScanCallback leScanCallback = new ScanCallback() {
-        @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            //setLogMessage("Device Name: " + result.getDevice().getName()+" MAC:" +result.getDevice().getAddress()+ " rssi: " + result.getRssi(), TEXT_APPEND);
-            boolean res = bleScanMacNameMap.containsKey(result.getDevice().getAddress());
-            Log.d(TAG, "onScanResult: res"+ res);
-            if(res == false) {
-                bleScanMacNameMap.put(result.getDevice().getAddress(), result.getDevice().getName());
-                setLogMessage("Device Name: " + result.getDevice().getName() + " MAC:" + result.getDevice().getAddress(), TEXT_APPEND);
-                setLogMessage("", TEXT_APPEND);
-                bleScanCount++;
-                Log.d("BLE SCANING", "Device Name: " + result.getDevice().getName() + " MAC:" + result.getDevice().getAddress() + " rssi: " + result.getRssi());
-            }
-            if(result.getDevice().getAddress().equalsIgnoreCase(esp32MACAddr))
-            {
-                setLogMessage("Device Found:"+bleScanCount, TEXT_APPEND);
-                btnScan.setText(strScanStart);
-                stopScanning();
-                myDevice = result.getDevice();
-                Toast.makeText(getApplicationContext(), "FOUND Device:"+ myDevice.getName() + "="+myDevice.getAddress(), Toast.LENGTH_SHORT).show();
-                setLogMessage("Connecting to Device :"+myDevice.getAddress(), TEXT_APPEND);
-                Log.d(TAG, "LIST of UUIDs:"+ myDevice.getUuids());
-                scannerTimer.cancel();
-                mBluetoothGatt = myDevice.connectGatt(getApplicationContext(), false, mGattCallback);
-                Log.d(TAG, "Trying to create a new connection.");
-                connectedBluetoothMAC = myDevice.getAddress();
-                connectedBluetoothName = myDevice.getName();
-                mBluetoothGatt.connect();
-                stopScanning();
-            }else{
-                Log.d(TAG, "NOT MATCHED:"+result.getDevice().getAddress() +"!="+ esp32MACAddr);
-            }
-        }
-
-        @Override
-        public void onScanFailed(int errorCode) {
-            super.onScanFailed(errorCode);
-            Log.d(TAG, "onScanFailed: ");
-        }
-    };
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           String permissions[], int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        //if(grantResults.length == 0) return;
-        Log.d(TAG, "onRequestPermissionsResult: requestCode:"+ requestCode + " grantResults.length:"+grantResults.length);
-        switch (requestCode) {
-            case MY_PERMISSION_REQUEST_CODE:
-                if(grantResults.length > 0 && grantResults[0] ==
-                        PackageManager.PERMISSION_GRANTED)
-                    //Do your work
-                    Log.d(TAG, "onRequestPermissionsResult: STORAGE access granted");
-                    break;
-            case PERMISSION_REQUEST_COARSE_LOCATION: {
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Log.d(TAG, ("coarse location permission granted"));
-                } else {
-                    final AlertDialog.Builder builder = new AlertDialog.Builder(this);
-                    builder.setTitle("Functionality limited");
-                    builder.setMessage("Since location access has not been granted, this app will not be able to discover beacons when in the background.");
-                    builder.setPositiveButton(android.R.string.ok, null);
-                    builder.setOnDismissListener(new DialogInterface.OnDismissListener() {
-
-                        @Override
-                        public void onDismiss(DialogInterface dialog) {
-                        }
-
-                    });
-                    builder.show();
-                }
-                return;
-            }
-        }
-    }
-
-    public void startScanning() {
-        Log.d(TAG,("start scanning"));
-        btScanner.startScan(leScanCallback);
-        //startScanningButton.setVisibility(View.INVISIBLE);
-        //stopScanningButton.setVisibility(View.VISIBLE);
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                btScanner.startScan(leScanCallback);
-            }
-        });
-    }
-
-    public void stopScanning() {
-        Log.d(TAG,("stopping scanning"));
-        bleScanMacNameMap.clear();
-//        peripheralTextView.append("Stopped Scanning");
-        //startScanningButton.setVisibility(View.VISIBLE);
-        //stopScanningButton.setVisibility(View.INVISIBLE);
-        btScanner.stopScan(leScanCallback);
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                btScanner.stopScan(leScanCallback);
-            }
-        });
-    }
-
-    public  boolean startTelemetryData(int start) {
-
-        byte[] data = new byte[MTU_SIZE];
-        if(1 == start) {
-            data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
-            data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
-            data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_START;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
-            data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
-        }else{
-            data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
-            data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
-            data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_END;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
-            data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
-        }
-        if (characEsp32 == null) {
-            Log.e(TAG, "characEsp32 not found!");
-            return false;
-        }
-        characEsp32.setValue(data);
-        boolean status1 = mBluetoothGatt.writeCharacteristic(characEsp32);
-        if (status1) {
-            Log.d(TAG, "SENT CHAR: ["+characEsp32.getUuid()+"]:"+bytesToHexString(data));
-        } else{
-            Log.e(TAG, "startTelemetryData writeControlCharacteristic: Failed to write [" + characEsp32.getUuid() + "]:" + bytesToHexString(data));
-            currentWriteStatus = WRITE_STATUS_FAIL;
-            updateTelemetryButtonOnFailure(start);
-        }
-        return status1;
-    }
-    public  String bytesToHexString(byte[] data){
-        StringBuffer result = new StringBuffer();
-        for (byte b : data) {
-            result.append(String.format("%02X ", b));
-            result.append(" "); // delimiter
-        }
-        return result.toString();
-    }
-    public  String bytesToHexString(short[] data){
-        StringBuffer result = new StringBuffer();
-        for (short b : data) {
-            result.append(String.format("%02X ", b));
-            result.append(" "); // delimiter
-        }
-        return result.toString();
-    }
-
-
-    /******************* Message Handler ************************/
-    Handler mHandler = null;
-    BluetoothGattDescriptor descriptor = null;
-    void esp32MessageHandler() {
-        HandlerThread handlerThread = new HandlerThread("esp32BluetoothHandler");
-        handlerThread.start();
-        Looper looper = handlerThread.getLooper();
-
-        if (mHandler == null) {
-            mHandler = new Handler(looper) {
-                @Override
-                public void handleMessage(@NonNull Message msg) {
-                    super.handleMessage(msg);
-                    Log.d(TAG, "handleMessage: Message msgId:"+msg.what);
-                    switch (msg.what){
-                        case MSG_SUB_NOTIFY:
-                            descriptor = characEsp32.getDescriptor(UUID.fromString(WRITE_DESC_UUID));
-                            if (descriptor == null) {
-                                Log.e(TAG, String.format("ERROR: Could not get CCC descriptor for characteristic %s", characEsp32.getUuid()));
-                                return ;
-                            }
-                            Log.d(TAG, "setNotify: notif:"+ mBluetoothGatt.setCharacteristicNotification(characEsp32, true));
-                            byte[] value;
-                            int properties = characEsp32.getProperties();
-                            if ((properties & PROPERTY_NOTIFY) > 0) {
-                                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
-                            } else if ((properties & PROPERTY_INDICATE) > 0) {
-                                value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
-                            } else {
-                                Log.e(TAG, String.format("ERROR: Characteristic %s does not have notify or indicate property", characEsp32.getUuid()));
-                                return ;
-                            }
-                            final byte[] finalValue = true ? value : BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE;
-                            // Then write to descriptor
-                            descriptor.setValue(finalValue);
-                            boolean result;
-                            result = mBluetoothGatt.writeDescriptor(descriptor);
-                            Log.d(TAG, "setNotify: " + result);
-                            if(!result)
-
-                            {
-                                Log.e(TAG, String.format("ERROR: writeDescriptor failed for descriptor: %s", descriptor.getUuid()));
-                                //completedCommand();
-                            }else{
-                                Log.d(TAG, "Notification Enabled for "+descriptor.getUuid() + " Val:"+finalValue);
-
-                            }
-                            break;
-                        case MSG_START_TELEMETRY:
-                            startTelemetryData(1);
-                            break;
-                        case MSG_STOP_TELEMETRY:
-                            startTelemetryData(2);
-                            break;
-                        case MSG_PROCESS_BLE_PACKETS:
-                            processRecvdData((byte[])msg.obj);
-                            break;
-                        case MSG_PROCESS_START_OTA:
-                            try {
-                                startOTAProcess((String) msg.obj);
-                            } catch (InterruptedException e) {
-                                Log.e(TAG, "handleMessage: ", e);
-                            }
-                            break;
-                    }
-                }
-            };
-        }
-    }//esp32MessageHandler
+    };*/
 }
