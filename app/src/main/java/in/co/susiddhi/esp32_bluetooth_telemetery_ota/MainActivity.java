@@ -69,6 +69,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -79,13 +80,13 @@ import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE;
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
 
 public class MainActivity extends AppCompatActivity {
-    public static final int PICKFILE_RESULT_CODE = 1;
-    private static final int MY_PERMISSION_REQUEST_CODE = 1001;
-    public final static int MTU_SIZE = 500;
-    private final static int TEXT_APPEND = 1;
-    private final static int TEXT_NOT_APPEND = 0;
-    private final static int TEXT_OTA_PERCENT = 2;
-
+    public static final int PICKFILE_RESULT_CODE            = 1;
+    private static final int MY_PERMISSION_REQUEST_CODE     = 1001;
+    public final static int MTU_SIZE                        = 500;
+    private final static int TEXT_APPEND                    = 1;
+    private final static int TEXT_NOT_APPEND                = 0;
+    private final static int TEXT_OTA_PERCENT               = 2;
+    private final static int FW_DETAILS_SIZE                = 256;
     // Storage Permissions
     private static final int REQUEST_EXTERNAL_STORAGE = 1;
     private static final int WRITE_STATUS_FAIL = 2;
@@ -137,11 +138,13 @@ public class MainActivity extends AppCompatActivity {
     private final static String WRITE_SERVICE_UUID = "000000ff-0000-1000-8000-00805f9b34fb";
     private final static String WRITE_CHAR_UUID =  "0000ff01-0000-1000-8000-00805f9b34fb";
     private final static String WRITE_DESC_UUID = "00002902-0000-1000-8000-00805f9b34fb";
+
     public static  final int MSG_SUB_NOTIFY = 10;
     public static  final int MSG_START_TELEMETRY = 12;
     public static  final int MSG_STOP_TELEMETRY = 13;
     public static  final int MSG_PROCESS_BLE_PACKETS = 14;
     public static  final int MSG_PROCESS_START_OTA = 15;
+    public static  final int MSG_GET_FW_DETAILS = 16;
 
     /* Bluetooth message format index send to APP */
     public static  final int BT_HEADER_START_INDEX             =    0;
@@ -157,13 +160,18 @@ public class MainActivity extends AppCompatActivity {
 /** HEADER_START -- MSG_TYPE -- MSG_ACTION -- HEADER_END */
     public static  final int  BT_MSG_HEADER_FIRST_BYTE            =       0xFE;
     public static  final int  BT_MSG_HEADER_LAST_BYTE             =       0xEF;
+
     public static  final int  BT_MSG_HEADER_MSG_TYPE_TELEMETRY    =       0x10;
     public static  final int  BT_MSG_HEADER_MSG_TYPE_OTA          =       0x11;
-    public static  final int  BT_MSG_HEADER_MSG_ACTION_DEFAULT    =       0x00;
-    public static  final int  BT_MSG_HEADER_MSG_ACTION_START      =       0x01;
-    public static  final int  BT_MSG_HEADER_MSG_ACTION_CONTINUE   =       0x02;
-    public static  final int  BT_MSG_HEADER_MSG_ACTION_END        =       0x03;
-    public static  final int  BT_MSG_HEADER_MSG_ACTION_ABORT      =       0x04;
+    public static  final int  BT_MSG_HEADER_MSG_TYPE_FIRM_VER     =       0x12;
+
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_DEFAULT     =       0x00;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_START       =       0x01;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_CONTINUE    =       0x02;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_END         =       0x03;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_ABORT       =       0x04;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_FW_REQUEST  =       0x05;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_FW_RESPONSE =       0x06;
 
     public static  final int  OTA_ERROR_DEFAULT                   =       0;
     public static  final int  OTA_ERROR_CODE_INTERNAL_ERROR       =       0x1000;
@@ -183,6 +191,7 @@ public class MainActivity extends AppCompatActivity {
     private int bleScanCount = 0;
     private int abortOTAProcess = 0;
     private String deviceAddress;
+    private String deviceFirmwareVersion;
 
 
     void setOTA_Abort(int value){
@@ -200,6 +209,7 @@ public class MainActivity extends AppCompatActivity {
     int oncharactersticsWriteCount = 0;
 
     //***** Bluetooth  Details ****
+
     SharedPreferences sharedPreferences = null;
     String PREF_MAC_KEY =  "in.co.susiddhi.esp32_ble_tele_ota_MAC";
     @RequiresApi(api = Build.VERSION_CODES.M)
@@ -335,8 +345,8 @@ public class MainActivity extends AppCompatActivity {
                     setLogMessage("Copy OTA File to  below location and Start Again:" + otaFolderPath, TEXT_APPEND);
                 }else {
                     Message msg = new Message();
-                    msg.what = MSG_PROCESS_START_OTA;
-                    msg.obj = otaFolderPath;
+                    msg.what = MSG_GET_FW_DETAILS;
+                    //msg.obj = otaFolderPath;
                     mHandler.sendMessage(msg);
 
 //                    String otaFilePath = otaFolderPath + "/" + OTA_FILE_NAME;
@@ -675,6 +685,65 @@ public class MainActivity extends AppCompatActivity {
     /******* SCANNING ENDS ***************/
 
     /************** OTA STARTS *****************/
+
+
+    void startOtaRequestAndFilePath()
+    {
+        setOTA_Abort(OTA_ERROR_DEFAULT);
+        String otaFolderPath = "";
+        File otaDir = null;
+        try {
+            otaFolderPath = Environment.getExternalStorageDirectory().getPath()
+                    + File.separator + "documents/" + File.separator;
+            otaDir = new File(otaFolderPath);
+            if (!otaDir.exists()) {
+                //otaDir.mkdir();
+                otaFolderPath = Environment.getExternalStorageDirectory().getPath()
+                        + File.separator + "Documents/";
+                otaDir = new File(otaFolderPath);
+                if (otaDir.exists()) {
+
+                }
+            }
+        }catch(Exception e){
+            Log.e(TAG, "onClick: " + e);
+        }
+        if(mConnected == false){
+            setLogMessage("Device not Connected !!!", TEXT_APPEND);
+            return;
+        }
+        setLogMessage("OTA TODO", TEXT_APPEND);
+        Log.d(TAG, "onClick: OTA Click");
+
+        otaFolderPath += "DXe-OTA" + File.separator;
+        Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
+
+        otaDir = new File(otaFolderPath);
+        if(!otaDir.exists()){
+            otaDir.mkdir();
+        }
+        File[] files = otaDir.listFiles();
+        int filesFound = 0;
+        if(files != null){
+            filesFound = files.length;
+        }
+        Log.d("Files", "Size: "+ filesFound);
+        for (int i = 0; i < filesFound; i++)
+        {
+            Log.d("Files", "FileName:" + files[i].getName());
+            Log.d(TAG, "onClick: path:"+ files[i].getPath() + " Can Read:"+ files[i].canRead());
+            Log.d(TAG, "onClick: file len:"+ files[i].length());
+        }
+        if(filesFound == 0) {
+            setLogMessage("Copy OTA File to  below location and Start Again:" + otaFolderPath, TEXT_APPEND);
+        }else {
+            Message msg = new Message();
+            msg.what = MSG_PROCESS_START_OTA;
+            msg.obj = otaFolderPath;
+            mHandler.sendMessage(msg);
+        }
+    }
+
     long otaStartTime = 0;
     long otaPacketCount = 0;
     void sendOTA_Packet(int otaStatus, int fileSize, byte[] fileData)
@@ -789,64 +858,85 @@ public class MainActivity extends AppCompatActivity {
         sendOTA_Packet(MSG_OTA_START, fileSize, null);
         //Thread.sleep(500);
         int totalBytesSent = 0;
+        boolean validFirmwareVerCheck = false;
         try {
             BufferedInputStream buf = new BufferedInputStream(new FileInputStream(filePathOta));
             try {
                 buf.read(fileBytes, 0, fileBytes.length);
                 int bytesOffset = 0;
+                String downloadFwVer = checkDownloadedFirmwareDetails(Arrays.copyOf(fileBytes, 256));
+                downloadFwVer = downloadFwVer.replaceAll("\0+$", "");
+                deviceFirmwareVersion = deviceFirmwareVersion.replaceAll("\0+$", "");
+                Log.d(TAG, "startOTAProcess: DOWNLOADED FW:"+ downloadFwVer );
+                Log.d(TAG, "startOTAProcess: DXE firmware:"+ deviceFirmwareVersion);
 
-                while(totalBytesSent < fileSize) {
-                    Log.d(TAG, "startOTAProcess: While START:"+System.currentTimeMillis());
-                    int bytesToSent = 0;
-                    for (int i = 0; i < MTU_SIZE-BT_HEADER_END_INDEX; i++) {
-                        if((bytesOffset + i) >= fileSize){
+                if(deviceFirmwareVersion.equals(downloadFwVer)){
+                    Log.e(TAG, "startOTAProcess:  FIRMWARE MATCHED");
+                    setLogMessage("SAME FIRMWARE VERSIONS \n" +
+                            "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
+                            "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
+                    validFirmwareVerCheck = false;
+                }else{
+                    Log.e(TAG, "startOTAProcess:  FIRMWARE NOT MATCHED");
+                    setLogMessage("LATEST FIRMWARE AVAILABLE \n" +
+                            "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
+                            "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
+                    validFirmwareVerCheck = false;
+                }
+                if(validFirmwareVerCheck == true) {
+                    while (totalBytesSent < fileSize) {
+                        Log.d(TAG, "startOTAProcess: While START:" + System.currentTimeMillis());
+                        int bytesToSent = 0;
+                        for (int i = 0; i < MTU_SIZE - BT_HEADER_END_INDEX; i++) {
+                            if ((bytesOffset + i) >= fileSize) {
+                                break;
+                            }
+                            bytesMtu[i] = fileBytes[bytesOffset + i];
+                            bytesToSent++;
+                            totalBytesSent++;
+                        }
+                        ota_current_bytes_transferred = totalBytesSent;
+                        bytesOffset = bytesOffset + MTU_SIZE - BT_HEADER_END_INDEX;
+                        //Log.d(TAG, "startOTAProcess: Total Bytes sent:" + totalBytesSent +" bytesToSent:"+bytesToSent);
+                        Log.d(TAG, "startOTAProcess: WAIT CALLBACK:" + System.currentTimeMillis());
+                        while (true) {
+                            if (oncharactersticsWriteCount == 0) break;
+                            else {
+                                try {
+                                    Thread.sleep(1);
+                                } catch (InterruptedException e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                        }//while(1)
+                        Log.d(TAG, "startOTAProcess: BEFORE SEND:" + System.currentTimeMillis());
+                        sendOTA_Packet(MSG_OTA_PROCESS, bytesToSent, bytesMtu);
+                        //Thread.sleep(100);
+                        if ((OTA_ERROR_DEFAULT != getOTA_Abort()) || (currentWriteStatus == WRITE_STATUS_FAIL)) {
+                            Log.e(TAG, "startOTAProcess: ABORTING OTA");
                             break;
                         }
-                        bytesMtu[i] = fileBytes[bytesOffset + i];
-                        bytesToSent++;
-                        totalBytesSent++;
-                    }
-                    ota_current_bytes_transferred = totalBytesSent;
-                    bytesOffset = bytesOffset + MTU_SIZE-BT_HEADER_END_INDEX;
-                    //Log.d(TAG, "startOTAProcess: Total Bytes sent:" + totalBytesSent +" bytesToSent:"+bytesToSent);
-                    Log.d(TAG, "startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
-                    while(true)
-                    {
-                        if(oncharactersticsWriteCount  == 0) break;
-                        else{
-                            try {
-                                Thread.sleep(1);
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }//while(1)
-                    Log.d(TAG, "startOTAProcess: BEFORE SEND:"+System.currentTimeMillis());
-                    sendOTA_Packet(MSG_OTA_PROCESS, bytesToSent, bytesMtu);
-                    //Thread.sleep(100);
-                    if((OTA_ERROR_DEFAULT != getOTA_Abort()) || (currentWriteStatus == WRITE_STATUS_FAIL)){
-                        Log.e(TAG, "startOTAProcess: ABORTING OTA");
-                        break;
-                    }
-                }//while
+                    }//while
+                }
                 //Log.d(TAG, "startOTAProcess: DATA:"+bytesToHexString(fileBytes));
             } catch (IOException e) {
                 e.printStackTrace();
             }
             Log.d(TAG, "startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
-            while(true)
-            {
-                if(oncharactersticsWriteCount  == 0) break;
-                else{
-                    try {
-                        Thread.sleep(1);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
+            if(validFirmwareVerCheck == true) {
+                while (true) {
+                    if (oncharactersticsWriteCount == 0) break;
+                    else {
+                        try {
+                            Thread.sleep(1);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
                     }
-                }
-            }//while(1)
-            sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
-            buf.close();
+                }//while(1)
+                sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
+                buf.close();
+            }
             // Thread.sleep(500);
         } catch (FileNotFoundException e) {
             // TODO Auto-generated catch block
@@ -877,7 +967,31 @@ public class MainActivity extends AppCompatActivity {
             intTelemetryStarted = 1;
         }
     }
-    
+
+    public  boolean sendRequest(int request) {
+        byte[] data = new byte[BT_HEADER_END_INDEX+1];
+        switch(request){
+            case BT_MSG_HEADER_MSG_TYPE_FIRM_VER:
+                deviceFirmwareVersion = "";
+                data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
+                data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_FIRM_VER;
+                data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_FW_REQUEST;
+                data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = 0;
+                data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = 0;
+                data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
+                data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
+                data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
+                break;
+        }
+        boolean status1 = bluetoothService.writeCharacteristics(characEsp32, data);
+        if (status1) {
+            Log.d(TAG, "sendRequest SENT:" +bytesToHexString(data));
+        } else{
+            Log.e(TAG, "sendRequest writeControlCharacteristic: Failed to write []:" + bytesToHexString(data));
+        }
+        return status1;
+    }
+
     public  boolean startTelemetryData(int start) {
 
         byte[] data = new byte[BT_HEADER_END_INDEX+1];
@@ -969,6 +1083,55 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    String checkDownloadedFirmwareDetails(byte [] value)
+    {
+        String fw_Details = "";
+        int skipByteLen = 4 + 4 + 8 + 32; //int magic word, int secure_ver, int reser[2]
+        byte[] bytePayload = new byte[32];
+        for (int  i  = 0; i < (32); i++){// Firmware version
+            bytePayload[i] = value[skipByteLen+i];
+        }
+        Log.d(TAG, "checkDownloadedFirmwareDetails: "+ bytesToHexString(bytePayload));
+        String strPayload = new String(bytePayload);
+        strPayload = strPayload.replaceAll("\0+$", "");
+        String firmware_version = strPayload;
+        fw_Details += "FIRMWARE VERSION:"+ strPayload;
+        Log.d(TAG, "DownloadedFirware: FW VER:" + strPayload);
+
+        skipByteLen = 4 + 4 + 8 + 32 + 32; //int magic word, int secure_ver, int reser[2] + char ver[32]
+        for (int  i  = 0; i < (32); i++){// Project Name
+            bytePayload[i] = value[skipByteLen+i];
+        }
+        strPayload = new String(bytePayload);
+        strPayload = strPayload.replaceAll("\0+$", "");
+        fw_Details += "\nPROJECT NAME:"+ strPayload;
+        Log.d(TAG, "DownloadedFirware: PROJECT NAME:" + strPayload);
+
+        //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32]
+        skipByteLen = 4 + 4 + 8 + 32 + 32 + 32;
+        for (int  i  = 0; i < (32); i++){// Date and Time
+            bytePayload[i] = value[skipByteLen+i];
+        }
+        bytePayload[14] = ' ';
+        bytePayload[15] = ' ';
+        strPayload = new String(bytePayload);
+        strPayload = strPayload.replaceAll("\0+$", "");
+        fw_Details += "\nBUILD DATE:"+ strPayload;
+        Log.d(TAG, "DownloadedFirware: DATE TIME:" + strPayload);
+
+        //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32] + char date[16] + char time[16]
+        skipByteLen = 4 + 4 + 8 + 32 + 32 + 32+32;
+        for (int  i  = 0; i < (32); i++){// Date and Time
+            bytePayload[i] = value[skipByteLen+i];
+        }
+        strPayload = new String(bytePayload);
+        strPayload = strPayload.replaceAll("\0+$", "");
+        fw_Details += "\nIDF VERSION:"+ strPayload;
+        Log.d(TAG, "DownloadedFirware: IDF VER:" + strPayload);
+        //setLogMessage(fw_Details, TEXT_APPEND);
+        return firmware_version;
+    }
+
     private void processRecvdData(byte[] value) {
 
         for(int i = 0; i< value.length; i++){
@@ -990,12 +1153,60 @@ public class MainActivity extends AppCompatActivity {
                 Date date = new Date();
                 Log.d(TAG, "processRecvdData:"+date+": TELEMETRY LEN:"+length_recvd+" DATA:"+strPayload);
                 setLogMessage("TELEMETRY["+length_recvd+"]:\n"+strPayload, TEXT_APPEND);
-            }else if((value[BT_HEADER_MSG_TYPE_INDEX] == BT_MSG_HEADER_MSG_TYPE_OTA) && (value[BT_HEADER_MSG_ACTION_INDEX] == BT_MSG_HEADER_MSG_ACTION_ABORT))
+            }
+            else if((value[BT_HEADER_MSG_TYPE_INDEX] == BT_MSG_HEADER_MSG_TYPE_OTA) && (value[BT_HEADER_MSG_ACTION_INDEX] == BT_MSG_HEADER_MSG_ACTION_ABORT))
             {
                 Log.e(TAG, "processRecvdData: OTA ABORT MESSAGE");
                 int errorCode =  (value[BT_HEADER_END_INDEX+1] | (value[BT_HEADER_END_INDEX+2] << 8)) ;
                 Log.e(TAG, "processRecvdData: Error Code"+ String.format("%x", errorCode));
                 setOTA_Abort(OTA_ERROR_CODE_INTERNAL_ERROR);
+            }
+            else if((value[BT_HEADER_MSG_TYPE_INDEX] == BT_MSG_HEADER_MSG_TYPE_FIRM_VER) && (value[BT_HEADER_MSG_ACTION_INDEX] == BT_MSG_HEADER_MSG_ACTION_FW_RESPONSE))
+            {
+                String fw_Details = "";
+                int skipByteLen = 4 + 4 + 8; //int magic word, int secure_ver, int reser[2]
+                byte[] bytePayload = new byte[32];
+                for (int  i  = 0; i < (32); i++){// Firmware version
+                    bytePayload[i] = value[BT_HEADER_END_INDEX+1+skipByteLen+i];
+                }
+                String strPayload = new String(bytePayload);
+                strPayload = strPayload.replaceAll("\0+$", "");
+                fw_Details += "FIRMWARE VERSION:"+ strPayload;
+                Log.d(TAG, "processRecvdData: FW VER:" + strPayload);
+                deviceFirmwareVersion = strPayload;
+                skipByteLen = 4 + 4 + 8 + 32; //int magic word, int secure_ver, int reser[2] + char ver[32]
+                for (int  i  = 0; i < (32); i++){// Project Name
+                    bytePayload[i] = value[BT_HEADER_END_INDEX+1+skipByteLen+i];
+                }
+                strPayload = new String(bytePayload);
+                strPayload = strPayload.replaceAll("\0+$", "");
+                fw_Details += "\nPROJECT NAME:"+ strPayload;
+                Log.d(TAG, "processRecvdData: PROJECT NAME:" + strPayload);
+
+                //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32]
+                skipByteLen = 4 + 4 + 8 + 32 + 32;
+                for (int  i  = 0; i < (32); i++){// Date and Time
+                    bytePayload[i] = value[BT_HEADER_END_INDEX+1+skipByteLen+i];
+                }
+                bytePayload[14] = ' ';
+                bytePayload[15] = ' ';
+                strPayload = new String(bytePayload);
+                strPayload = strPayload.replaceAll("\0+$", "");
+                fw_Details += "\nBUILD DATE:"+ strPayload;
+                Log.d(TAG, "processRecvdData: DATE TIME:" + strPayload);
+
+                //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32] + char date[16] + char time[16]
+                skipByteLen = 4 + 4 + 8 + 32 + 32 + 32;
+                for (int  i  = 0; i < (32); i++){// Date and Time
+                    bytePayload[i] = value[BT_HEADER_END_INDEX+1+skipByteLen+i];
+                }
+                strPayload = new String(bytePayload);
+                strPayload = strPayload.replaceAll("\0+$", "");
+                fw_Details += "\nIDF VERSION:"+ strPayload;
+                Log.d(TAG, "processRecvdData: IDF VER:" + strPayload);
+                setLogMessage(fw_Details, TEXT_APPEND);
+
+                startOtaRequestAndFilePath();
             }
         }else{
             Log.e(TAG, "processRecvdData: Wrong Header");
@@ -1058,6 +1269,9 @@ public class MainActivity extends AppCompatActivity {
                             break;
                         case MSG_PROCESS_BLE_PACKETS:
                             processRecvdData((byte[])msg.obj);
+                            break;
+                        case MSG_GET_FW_DETAILS:
+                            sendRequest(BT_MSG_HEADER_MSG_TYPE_FIRM_VER);
                             break;
                         case MSG_PROCESS_START_OTA:
                             try {
