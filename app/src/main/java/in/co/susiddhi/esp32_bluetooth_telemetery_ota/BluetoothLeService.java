@@ -193,7 +193,8 @@ public class BluetoothLeService extends Service {
             public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
                 super.onCharacteristicWrite(gatt, characteristic, status);
                 Log.d(TAG, "onCharacteristicWrite:WRITE CALLBACK status:"+status+" Time:"+ System.currentTimeMillis());
-                if (status == BluetoothGatt.GATT_SUCCESS) {
+                //if (status == BluetoothGatt.GATT_SUCCESS)
+                {
                     broadcastUpdate(ACTION_DATA_WRITE_CALLBACK, characteristic);
                 }
             }

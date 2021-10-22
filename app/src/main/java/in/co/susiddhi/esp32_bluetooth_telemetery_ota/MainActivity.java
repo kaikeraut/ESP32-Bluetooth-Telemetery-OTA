@@ -81,7 +81,7 @@ import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
 public class MainActivity extends AppCompatActivity {
     public static final int PICKFILE_RESULT_CODE = 1;
     private static final int MY_PERMISSION_REQUEST_CODE = 1001;
-    public final static int MTU_SIZE = 512;
+    public final static int MTU_SIZE = 500;
     private final static int TEXT_APPEND = 1;
     private final static int TEXT_NOT_APPEND = 0;
     private final static int TEXT_OTA_PERCENT = 2;
@@ -740,6 +740,10 @@ public class MainActivity extends AppCompatActivity {
         oncharactersticsWriteCount = 1;
         //boolean status1 = mBluetoothGatt.writeCharacteristic(characEsp32);
         boolean status1 = bluetoothService.writeCharacteristics(characEsp32, data);
+        if(otaStatus == MSG_OTA_COMPLETE){
+            Log.d(TAG, "OTA SENT CHAR: []:" + bytesToHexString(data));
+            setLogMessage(bytesToHexString(data), TEXT_APPEND);
+        }
         if (status1) {
             assert data != null;
             //Log.d(TAG, "OTA SENT CHAR: [" + characEsp32.getUuid() + "]:" + bytesToHexString(data));
@@ -829,6 +833,18 @@ public class MainActivity extends AppCompatActivity {
             } catch (IOException e) {
                 e.printStackTrace();
             }
+            Log.d(TAG, "startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
+            while(true)
+            {
+                if(oncharactersticsWriteCount  == 0) break;
+                else{
+                    try {
+                        Thread.sleep(1);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }//while(1)
             sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
             buf.close();
             // Thread.sleep(500);
@@ -944,6 +960,7 @@ public class MainActivity extends AppCompatActivity {
                     ota_current_bytes_transferred, ota_total_file_length, percent, speed, (int)(System.currentTimeMillis() - ota_started_time)/1000);
 
             textViewLog.setText(screenLogMsgforOTA + strOtaProgress);
+            Log.e(TAG, "OTA Progress:"+ strOtaProgress );
             ota_delta_duration = System.currentTimeMillis();
             ota_delta_data_transferred = ota_current_bytes_transferred;
         }
