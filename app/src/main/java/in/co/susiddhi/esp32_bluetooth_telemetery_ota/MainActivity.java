@@ -7,6 +7,7 @@ import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import android.Manifest;
 import android.app.Activity;
@@ -76,6 +77,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
+import javax.security.auth.login.LoginException;
 
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE;
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
@@ -196,7 +199,8 @@ public class MainActivity extends AppCompatActivity {
     private int bleScanCount = 0;
     private int abortOTAProcess = 0;
     private String deviceAddress;
-    private String deviceFirmwareVersion;
+    private String deviceFirmwareVersion="";
+    private String downloadFwVer="";
 
 
     void setOTA_Abort(int value){
@@ -252,6 +256,15 @@ public class MainActivity extends AppCompatActivity {
                 Manifest.permission.READ_EXTERNAL_STORAGE,
                 Manifest.permission.WRITE_EXTERNAL_STORAGE,
         }, MY_PERMISSION_REQUEST_CODE);
+
+        //verifyStoragePermissions(MainActivity.this);
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1);
+        }
         InputFilter[] macAddressFilters = new InputFilter[1];
 
         // Bluetooth Start **********************************************
@@ -262,7 +275,7 @@ public class MainActivity extends AppCompatActivity {
             Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
             startActivityForResult(enableIntent,REQUEST_ENABLE_BT);
         }
-        // Make sure we have access coarse location enabled, if not, prompt the user to enable it
+ /*       // Make sure we have access coarse location enabled, if not, prompt the user to enable it
         if (this.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             final AlertDialog.Builder builder = new AlertDialog.Builder(this);
             builder.setTitle("This app needs location access");
@@ -275,7 +288,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
             builder.show();
-        }
+        }*/
         // Bluetooth End **********************************************
         macAddressFilters[0] = new InputFilter() {
             @Override
@@ -316,14 +329,17 @@ public class MainActivity extends AppCompatActivity {
                 File otaDir = null;
                 try {
                     otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                            + File.separator + "documents/" + File.separator;
+                            + File.separator + "documents" + File.separator;
                     otaDir = new File(otaFolderPath);
                     if (!otaDir.exists()) {
+                        Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
                         //otaDir.mkdir();
                         otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                                + File.separator + "Documents/";
+                                + File.separator + "Documents" + File.separator;
                         otaDir = new File(otaFolderPath);
-                        otaDir.exists();
+                        if (!otaDir.exists()) {
+                            Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
+                        }
                     }
                 }catch(Exception e){
                     Log.e(TAG, "onClick: " + e);
@@ -340,8 +356,10 @@ public class MainActivity extends AppCompatActivity {
 
                 otaDir = new File(otaFolderPath);
                 if(!otaDir.exists()){
+                    Log.d(TAG, "onClick: Creating Folder otaFolderPath:"+otaFolderPath);
                     otaDir.mkdir();
                 }
+                Log.d(TAG, "onClick: len:" + otaDir.length() + " isDir:"+otaDir.isDirectory());
                 File[] files = otaDir.listFiles();
                 int filesFound = 0;
                 if(files != null){
@@ -401,7 +419,10 @@ public class MainActivity extends AppCompatActivity {
                 }
                 setLogMessage("Clearing..", TEXT_NOT_APPEND);
                 stopScanning();*/
-                bluetoothService.disconnect();
+                setLogMessage("Clearing..", TEXT_NOT_APPEND);
+                if(bluetoothService != null) {
+                    bluetoothService.disconnect();
+                }
                 Toast.makeText(getApplicationContext(), "DISCONNECTING BLE", Toast.LENGTH_SHORT).show();
                 Log.d(TAG, "onLongClick: DISCONNECT BLE END ");
                 return false;
@@ -469,7 +490,6 @@ public class MainActivity extends AppCompatActivity {
         textViewLog.setMovementMethod(new ScrollingMovementMethod());
 
         esp32MessageHandler();
-        verifyStoragePermissions(MainActivity.this);
         //checkDownloadedFirmwareDetails();
     }//OnCreate
 
@@ -540,6 +560,17 @@ public class MainActivity extends AppCompatActivity {
                     REQUEST_EXTERNAL_STORAGE
             );
         }
+
+        permission = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_EXTERNAL_STORAGE);
+
+        if (permission != PackageManager.PERMISSION_GRANTED) {
+            // We don't have permission so prompt the user
+            ActivityCompat.requestPermissions(
+                    activity,
+                    PERMISSIONS_STORAGE,
+                    REQUEST_EXTERNAL_STORAGE
+            );
+        }
     }
     @Override
     public void onRequestPermissionsResult(int requestCode,
@@ -558,18 +589,7 @@ public class MainActivity extends AppCompatActivity {
                 if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     Log.d(TAG, ("coarse location permission granted"));
                 } else {
-                    final AlertDialog.Builder builder = new AlertDialog.Builder(this);
-                    builder.setTitle("Functionality limited");
-                    builder.setMessage("Since location access has not been granted, this app will not be able to discover beacons when in the background.");
-                    builder.setPositiveButton(android.R.string.ok, null);
-                    builder.setOnDismissListener(new DialogInterface.OnDismissListener() {
 
-                        @Override
-                        public void onDismiss(DialogInterface dialog) {
-                        }
-
-                    });
-                    builder.show();
                 }
                 return;
             }
@@ -808,6 +828,9 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "startOTAProcess: FileSize:"+fileSize + " FILE:"+filePathOta);
         sendOTA_Packet(MSG_OTA_START, fileSize, null);
 
+        btnOTA.setClickable(false);
+        btnTelemetry.setClickable(false);
+
         int totalBytesSent = 0;
         boolean validFirmwareVerCheck = true;
         try {
@@ -947,6 +970,7 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
             data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
+            btnOTA.setClickable(false);
         }else{
             data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
             data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
@@ -956,6 +980,7 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
             data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
+            btnOTA.setClickable(true);
         }
         boolean status1 = bluetoothService.writeCharacteristics(characEsp32, data);
         if (status1) {
@@ -1184,18 +1209,26 @@ public class MainActivity extends AppCompatActivity {
                 strPayload = strPayload.replaceAll("\0+$", "");
                 fw_Details += "\nIDF VERSION:"+ strPayload;
                 Log.d(TAG, "processRecvdData: IDF VER:" + strPayload);
-                setLogMessage(fw_Details, TEXT_APPEND);
-                String downloadFwVer = checkDownloadedFirmwareDetails();
+
+                if(OtaTransferSuccessCheckUpdateStatus == 0){
+                    setLogMessage(fw_Details, TEXT_APPEND);
+                }
+                if(downloadFwVer.length() == 0) {
+                    downloadFwVer = checkDownloadedFirmwareDetails();
+                }
                 downloadFwVer = downloadFwVer.replaceAll("\0+$", "");
                 deviceFirmwareVersion = deviceFirmwareVersion.replaceAll("\0+$", "");
                 Log.d(TAG, "startOTAProcess: DOWNLOADED FW:"+ downloadFwVer );
                 Log.d(TAG, "startOTAProcess: DXE firmware:"+ deviceFirmwareVersion);
-
-                if(OtaTransferSuccessCheckUpdateStatus == 1){
+                setLogMessage("Ota Flag:"+ OtaTransferSuccessCheckUpdateStatus, TEXT_APPEND);
+                if(OtaTransferSuccessCheckUpdateStatus >= 1){
+                    btnOTA.setClickable(true);
+                    btnTelemetry.setClickable(true);
                     if(deviceFirmwareVersion.equals(downloadFwVer)){
-                        setLogMessage("OTA : SUCCESS", TEXT_APPEND);
+                        setLogMessage("\nOTA : SUCCESS\n", TEXT_APPEND);
                     }else{
-                        setLogMessage("OTA : FAILURE,  FW Mismatch", TEXT_APPEND);
+                        setLogMessage("\nOTA : FAILURE,  FW Mismatch", TEXT_APPEND);
+                        setLogMessage("Running:"+deviceFirmwareVersion + "\nDowloaded:"+downloadFwVer+"\n", TEXT_APPEND);
                     }
                 }else {
                     if(deviceFirmwareVersion.equals(downloadFwVer)){
@@ -1203,17 +1236,26 @@ public class MainActivity extends AppCompatActivity {
                         setLogMessage("SAME FIRMWARE VERSIONS .. Skipping OTA \n" +
                                 "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
                                 "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
+                        Toast.makeText(getApplicationContext(), "SAME FIRMWARE", Toast.LENGTH_SHORT).show();
                     }else{
                         Log.e(TAG, "startOTAProcess:  FIRMWARE NOT MATCHED");
                         setLogMessage("LATEST FIRMWARE AVAILABLE \n" +
                                 "DEVICE FIRMWARE VERSION:"+deviceFirmwareVersion+ "\n"+
                                 "DOWNLOADED FIRMWARE VERSION:"+downloadFwVer, TEXT_APPEND);
                         startOtaRequestAndFilePath();
+                        Toast.makeText(getApplicationContext(), "Starting OTA", Toast.LENGTH_SHORT).show();
                     }
                 }
             }
         }else{
             Log.e(TAG, "processRecvdData: Wrong Header");
+        }
+        if(OtaTransferSuccessCheckUpdateStatus == 1){
+            setLogMessage("OTA: DXe connected.. Checking Firmware", TEXT_APPEND);
+            Message msg = new Message();
+            msg.what = MSG_GET_FW_DETAILS;
+            mHandler.sendMessage(msg);
+            OtaTransferSuccessCheckUpdateStatus++;
         }
     }
     /******************* Message Handler ************************/
@@ -1325,12 +1367,6 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(getApplicationContext(), "DXE Connected", Toast.LENGTH_SHORT).show();
                 btnOTA.setVisibility(View.VISIBLE);
                 btnTelemetry.setVisibility(View.VISIBLE);
-                if(OtaTransferSuccessCheckUpdateStatus == 1){
-                    setLogMessage("OTA: DXe connected.. Checking Firmware", TEXT_APPEND);
-                    Message msg = new Message();
-                    msg.what = MSG_GET_FW_DETAILS;
-                    mHandler.sendMessage(msg);
-                }
             } else if (BluetoothLeService.ACTION_GATT_DISCONNECTED.equals(action)) {
                 mConnected = false;
                 setLogMessage("DXE:BLUETOOTH DISCONNECTED", TEXT_APPEND);
@@ -1363,8 +1399,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-/*        Log.d(TAG, "onResume: Connect back to the MAC Address ");
+        Log.d(TAG, "onResume: Registering broadcaster ");
         registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+        /*
         if (bluetoothService != null) {
             final boolean result = bluetoothService.connect(esp32MACAddr);
             Log.d(TAG, "Connect request result=" + result);
@@ -1374,7 +1411,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        //unregisterReceiver(gattUpdateReceiver);
+        unregisterReceiver(gattUpdateReceiver);
     }
     private static IntentFilter makeGattUpdateIntentFilter() {
         final IntentFilter intentFilter = new IntentFilter();
