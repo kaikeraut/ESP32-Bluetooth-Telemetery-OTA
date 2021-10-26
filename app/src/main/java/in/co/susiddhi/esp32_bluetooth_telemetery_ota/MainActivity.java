@@ -86,7 +86,8 @@ import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
 public class MainActivity extends AppCompatActivity {
     public static final int PICKFILE_RESULT_CODE            = 1;
     private static final int MY_PERMISSION_REQUEST_CODE     = 1001;
-    public final static int MTU_SIZE                        = 500;
+    public final static int MTU_SIZE_REQUESTED              = 500;
+    public static int MTU_SIZE_GOT                    = 256;
     private final static int TEXT_APPEND                    = 1;
     private final static int TEXT_NOT_APPEND                = 0;
     private final static int TEXT_OTA_PERCENT               = 2;
@@ -162,7 +163,12 @@ public class MainActivity extends AppCompatActivity {
     public static  final int BT_HEADER_PAYLOAD_LENGTH_INDEX1   =    4;
     public static  final int BT_HEADER_PAYLOAD_LENGTH_INDEX2   =    5;
     public static  final int BT_HEADER_PAYLOAD_LENGTH_INDEX3   =    6;
-    public static  final int BT_HEADER_END_INDEX               =    7;
+
+    public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0   =    7;
+    public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1   =    8;
+    public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2   =    9;
+    public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3   =    10;
+    public static  final int BT_HEADER_END_INDEX                 =    11;
 
             /* Message Header informations */
 /** HEADER_START -- MSG_TYPE -- MSG_ACTION -- HEADER_END */
@@ -180,6 +186,7 @@ public class MainActivity extends AppCompatActivity {
     public static  final int  BT_MSG_HEADER_MSG_ACTION_ABORT       =       0x04;
     public static  final int  BT_MSG_HEADER_MSG_ACTION_FW_REQUEST  =       0x05;
     public static  final int  BT_MSG_HEADER_MSG_ACTION_FW_RESPONSE =       0x06;
+    public static  final int  BT_MSG_HEADER_MSG_ACTION_OTA_DUMMY   =       0x07;
 
     public static  final int  OTA_ERROR_DEFAULT                   =       0;
     public static  final int  OTA_ERROR_CODE_INTERNAL_ERROR       =       0x1000;
@@ -192,6 +199,7 @@ public class MainActivity extends AppCompatActivity {
     public static  final int MSG_OTA_START                        =       0x12EC;
     public static  final int MSG_OTA_PROCESS	                  =       0x12ED;
     public static  final int MSG_OTA_COMPLETE                     =       0x12EF;
+    public static  final int MSG_OTA_PROCESS_DUMMY                =       0xDEAD;
 
     public static  final int BLUETOOTH_CONNECTED = 1;
     public static  final int BLUETOOTH_DISCONNECTED = 2;
@@ -607,6 +615,21 @@ public class MainActivity extends AppCompatActivity {
         public void onScanResult(int callbackType, ScanResult result) {
             //setLogMessage("Device Name: " + result.getDevice().getName()+" MAC:" +result.getDevice().getAddress()+ " rssi: " + result.getRssi(), TEXT_APPEND);
             boolean res = bleScanMacNameMap.containsKey(result.getDevice().getAddress());
+            Log.d(TAG, "onScanResult: Type:"+result.getDevice().getType() + " Alias:" + result.getDevice().getAlias());
+            switch (result.getDevice().getType()){
+                case BluetoothDevice.DEVICE_TYPE_CLASSIC:
+                    Log.d(TAG, "onScanResult: DEVICE_TYPE_CLASSIC");
+                    break;
+                case BluetoothDevice.DEVICE_TYPE_DUAL:
+                    Log.d(TAG, "onScanResult: DEVICE_TYPE_DUAL");
+                    break;
+                case BluetoothDevice.DEVICE_TYPE_LE:
+                    Log.d(TAG, "onScanResult: DEVICE_TYPE_LE");
+                    break;
+                case BluetoothDevice.DEVICE_TYPE_UNKNOWN:
+                    Log.d(TAG, "onScanResult: DEVICE_TYPE_UNKNOWN");
+                    break;
+            }
             Log.d(TAG, "onScanResult: res:"+ res);
             if(res == false) {
                 bleScanMacNameMap.put(result.getDevice().getAddress(), result.getDevice().getName());
@@ -730,7 +753,27 @@ public class MainActivity extends AppCompatActivity {
     void sendOTA_Packet(int otaStatus, int fileSize, byte[] fileData)
     {
         byte[] data = null;
-        if(otaStatus == MSG_OTA_START) {
+        if(otaStatus == MSG_OTA_PROCESS_DUMMY){
+            //otaPacketCount;
+            data = new byte[BT_HEADER_END_INDEX+1];
+            data[BT_HEADER_START_INDEX] = (byte) BT_MSG_HEADER_FIRST_BYTE;
+            data[BT_HEADER_MSG_TYPE_INDEX] = BT_MSG_HEADER_MSG_TYPE_OTA;
+            data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_OTA_DUMMY;
+            byte[] size = ByteBuffer.allocate(4).putInt(fileSize).array();
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = size[0];
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
+
+            byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
+
+            data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
+            Log.e(TAG, "sendOTA_Packet: DUMMY WRITES");
+        }else  if(otaStatus == MSG_OTA_START) {
             otaStartTime = System.currentTimeMillis();
             otaPacketCount++;
             data = new byte[BT_HEADER_END_INDEX+1];
@@ -742,8 +785,14 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
-            data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
 
+            byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
+
+            data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
         }else if(otaStatus == MSG_OTA_COMPLETE){
             otaPacketCount++;
             long otaEndtime = System.currentTimeMillis();
@@ -758,6 +807,13 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
+
+            byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
+
             data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
         }else if(otaStatus == MSG_OTA_PROCESS){
             otaPacketCount++;
@@ -770,6 +826,13 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
+
+            byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
+            data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
+
             data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
             for (int k = 0; k < fileSize; k++) {
                 data[BT_HEADER_END_INDEX + 1 + k] = (byte) (fileData[k] & 0xff);
@@ -802,6 +865,7 @@ public class MainActivity extends AppCompatActivity {
         ota_current_bytes_transferred = 0;
         ota_started_time = 0;
         screenLogMsgforOTA = "";
+        otaPacketCount = 0;
 
         String root = Environment.getExternalStorageDirectory().toString();
         Log.d(TAG, "startOTAProcess: root:"+root);
@@ -824,7 +888,7 @@ public class MainActivity extends AppCompatActivity {
         ota_total_file_length = fileSize;
         currentWriteStatus = WRITE_STATUS_DEFAULT;
         byte[] fileBytes = new byte[fileSize];
-        byte[] bytesMtu = new byte[MTU_SIZE];
+        byte[] bytesMtu = new byte[MTU_SIZE_GOT];
         Log.d(TAG, "startOTAProcess: FileSize:"+fileSize + " FILE:"+filePathOta);
         sendOTA_Packet(MSG_OTA_START, fileSize, null);
 
@@ -843,7 +907,7 @@ public class MainActivity extends AppCompatActivity {
                     while (totalBytesSent < fileSize) {
                         Log.d(TAG, "startOTAProcess: While START:" + System.currentTimeMillis());
                         int bytesToSent = 0;
-                        for (int i = 0; i < MTU_SIZE - BT_HEADER_END_INDEX; i++) {
+                        for (int i = 0; i < MTU_SIZE_GOT - BT_HEADER_END_INDEX; i++) {
                             if ((bytesOffset + i) >= fileSize) {
                                 break;
                             }
@@ -852,7 +916,7 @@ public class MainActivity extends AppCompatActivity {
                             totalBytesSent++;
                         }
                         ota_current_bytes_transferred = totalBytesSent;
-                        bytesOffset = bytesOffset + MTU_SIZE - BT_HEADER_END_INDEX;
+                        bytesOffset = bytesOffset + MTU_SIZE_GOT - BT_HEADER_END_INDEX;
                         Log.d(TAG, "startOTAProcess: WAIT CALLBACK:" + System.currentTimeMillis());
                         while (true) {
                             if (oncharactersticsWriteCount == 0) break;
@@ -875,8 +939,7 @@ public class MainActivity extends AppCompatActivity {
             } catch (IOException e) {
                 e.printStackTrace();
             }
-            Log.d(TAG, "startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
-            if(validFirmwareVerCheck == true) {
+            for(int i = 0; i < 3; i++){
                 while (true) {
                     if (oncharactersticsWriteCount == 0) break;
                     else {
@@ -887,7 +950,26 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 }//while(1)
-                sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
+                sendOTA_Packet(MSG_OTA_PROCESS_DUMMY, 0, null);
+            }//for loop
+
+            Log.d(TAG, "startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
+            if(validFirmwareVerCheck == true) {
+                for(int i = 0; i < 2; i++) {
+                    while (true) {
+                        if (oncharactersticsWriteCount == 0) break;
+                        else {
+                            try {
+                                Thread.sleep(1);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                    }//while(1)
+                    Thread.sleep(1000);
+
+                    sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
+                }
                 buf.close();
                 while (true) { // Wait for final Success full Write callback
                     if (oncharactersticsWriteCount == 0) break;
@@ -1161,7 +1243,7 @@ public class MainActivity extends AppCompatActivity {
             }
             else if((value[BT_HEADER_MSG_TYPE_INDEX] == BT_MSG_HEADER_MSG_TYPE_OTA) && (value[BT_HEADER_MSG_ACTION_INDEX] == BT_MSG_HEADER_MSG_ACTION_ABORT))
             {
-                Log.e(TAG, "processRecvdData: OTA ABORT MESSAGE");
+                Log.e(TAG, "processRecvdData: RECVD OTA ABORT MESSAGE");
                 int errorCode =  (value[BT_HEADER_END_INDEX+1] | (value[BT_HEADER_END_INDEX+2] << 8)) ;
                 Log.e(TAG, "processRecvdData: Error Code"+ String.format("%x", errorCode));
                 setOTA_Abort(OTA_ERROR_CODE_INTERNAL_ERROR);
@@ -1226,9 +1308,11 @@ public class MainActivity extends AppCompatActivity {
                     btnTelemetry.setClickable(true);
                     if(deviceFirmwareVersion.equals(downloadFwVer)){
                         setLogMessage("\nOTA : SUCCESS\n", TEXT_APPEND);
+                        Toast.makeText(getApplicationContext(), "OTA: SUCCESS", Toast.LENGTH_SHORT).show();
                     }else{
                         setLogMessage("\nOTA : FAILURE,  FW Mismatch", TEXT_APPEND);
                         setLogMessage("Running:"+deviceFirmwareVersion + "\nDowloaded:"+downloadFwVer+"\n", TEXT_APPEND);
+                        Toast.makeText(getApplicationContext(), "OTA: FAILURE", Toast.LENGTH_SHORT).show();
                     }
                 }else {
                     if(deviceFirmwareVersion.equals(downloadFwVer)){

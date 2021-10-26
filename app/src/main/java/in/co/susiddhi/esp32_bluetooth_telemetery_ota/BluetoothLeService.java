@@ -21,7 +21,7 @@ import androidx.annotation.Nullable;
 
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE;
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
-import static in.co.susiddhi.esp32_bluetooth_telemetery_ota.MainActivity.MTU_SIZE;
+
 
 public class BluetoothLeService extends Service {
     public static final String TAG = "BluetoothLeService";
@@ -175,7 +175,7 @@ public class BluetoothLeService extends Service {
                         Log.d(TAG, "onServicesDiscovered: descriptors uuid:"+desc.getUuid().toString());
                     }
                     broadcastUpdate(ACTION_GATT_SERVICES_DISCOVERED);
-                    mBluetoothGatt.requestMtu(MTU_SIZE);
+                    mBluetoothGatt.requestMtu(MainActivity.MTU_SIZE_REQUESTED);
                 } else {
                     Log.w(TAG, "onServicesDiscovered received: " + status);
                 }
@@ -195,6 +195,7 @@ public class BluetoothLeService extends Service {
                 super.onCharacteristicWrite(gatt, characteristic, status);
                 Log.d(TAG, "onCharacteristicWrite:WRITE CALLBACK status:"+status+" Time:"+ System.currentTimeMillis());
                 //if (status == BluetoothGatt.GATT_SUCCESS)
+
                 {
                     broadcastUpdate(ACTION_DATA_WRITE_CALLBACK, characteristic);
                 }
@@ -243,6 +244,7 @@ public class BluetoothLeService extends Service {
                     if (characEsp32 == null) {
                         Log.e(TAG, "characEsp32 not found!");
                     }
+                    MainActivity.MTU_SIZE_GOT = mtu;
                     broadcastUpdate(ACTION_MTU_CHANGED);
                 }
             }
