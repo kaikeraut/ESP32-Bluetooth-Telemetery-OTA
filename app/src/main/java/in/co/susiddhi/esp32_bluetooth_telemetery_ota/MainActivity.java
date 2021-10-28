@@ -87,7 +87,8 @@ public class MainActivity extends AppCompatActivity {
     public static final int PICKFILE_RESULT_CODE            = 1;
     private static final int MY_PERMISSION_REQUEST_CODE     = 1001;
     public final static int MTU_SIZE_REQUESTED              = 500;
-    public static int MTU_SIZE_GOT                    = 256;
+    public static int MTU_SIZE_GOT                          = 0;
+    public static int MTU_SIZE_REDUCTION_AT_DEVICE_FOR_WRITE_NR =   5;
     private final static int TEXT_APPEND                    = 1;
     private final static int TEXT_NOT_APPEND                = 0;
     private final static int TEXT_OTA_PERCENT               = 2;
@@ -163,12 +164,14 @@ public class MainActivity extends AppCompatActivity {
     public static  final int BT_HEADER_PAYLOAD_LENGTH_INDEX1   =    4;
     public static  final int BT_HEADER_PAYLOAD_LENGTH_INDEX2   =    5;
     public static  final int BT_HEADER_PAYLOAD_LENGTH_INDEX3   =    6;
-
+/*
     public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0   =    7;
     public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1   =    8;
     public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2   =    9;
     public static  final int BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3   =    10;
     public static  final int BT_HEADER_END_INDEX                 =    11;
+    */
+public static  final int BT_HEADER_END_INDEX                 =    7;
 
             /* Message Header informations */
 /** HEADER_START -- MSG_TYPE -- MSG_ACTION -- HEADER_END */
@@ -764,13 +767,13 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
-
+/*
             byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
-
+*/
             data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
             Log.e(TAG, "sendOTA_Packet: DUMMY WRITES");
         }else  if(otaStatus == MSG_OTA_START) {
@@ -786,12 +789,13 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
 
+            /*
             byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
-
+*/
             data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
         }else if(otaStatus == MSG_OTA_COMPLETE){
             otaPacketCount++;
@@ -807,12 +811,14 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
+/*
 
             byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
+*/
 
             data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
         }else if(otaStatus == MSG_OTA_PROCESS){
@@ -826,17 +832,23 @@ public class MainActivity extends AppCompatActivity {
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = size[1];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = size[2];
             data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = size[3];
+            //setLogMessage("Total Bytes Sending:"+(BT_HEADER_END_INDEX+fileSize+1), TEXT_APPEND);
 
+/*
             byte [] packetCnt = ByteBuffer.allocate(4).putInt((int) otaPacketCount).array();
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX0] = packetCnt[0];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX1] = packetCnt[1];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX2] = packetCnt[2];
             data[BT_HEADER_PAYLOAD_PCKT_CNT_INDEX3] = packetCnt[3];
+*/
 
             data[BT_HEADER_END_INDEX] = (byte) BT_MSG_HEADER_LAST_BYTE;
-            for (int k = 0; k < fileSize; k++) {
+            int k = 0;
+            for (k = 0; k < fileSize; k++) {
                 data[BT_HEADER_END_INDEX + 1 + k] = (byte) (fileData[k] & 0xff);
+                //data[BT_HEADER_END_INDEX + 1 + k] = (byte) (k);
             }
+            //setLogMessage("K="+k, TEXT_APPEND);
         }else{
             Log.e(TAG, "sendOTA_Packet: WRONG OTA PACKETS"+ otaStatus );
         }
@@ -904,10 +916,13 @@ public class MainActivity extends AppCompatActivity {
                 int bytesOffset = 0;
 
                 if(validFirmwareVerCheck == true) {
+                    //int forceQuit = 0;
+                    int lenToSend = MTU_SIZE_GOT - BT_HEADER_END_INDEX - MTU_SIZE_REDUCTION_AT_DEVICE_FOR_WRITE_NR;
                     while (totalBytesSent < fileSize) {
+
                         Log.d(TAG, "startOTAProcess: While START:" + System.currentTimeMillis());
                         int bytesToSent = 0;
-                        for (int i = 0; i < MTU_SIZE_GOT - BT_HEADER_END_INDEX; i++) {
+                        for (int i = 0; i < lenToSend; i++) {
                             if ((bytesOffset + i) >= fileSize) {
                                 break;
                             }
@@ -916,7 +931,7 @@ public class MainActivity extends AppCompatActivity {
                             totalBytesSent++;
                         }
                         ota_current_bytes_transferred = totalBytesSent;
-                        bytesOffset = bytesOffset + MTU_SIZE_GOT - BT_HEADER_END_INDEX;
+                        bytesOffset = bytesOffset + lenToSend;
                         Log.d(TAG, "startOTAProcess: WAIT CALLBACK:" + System.currentTimeMillis());
                         while (true) {
                             if (oncharactersticsWriteCount == 0) break;
@@ -934,6 +949,7 @@ public class MainActivity extends AppCompatActivity {
                             Log.e(TAG, "startOTAProcess: ABORTING OTA");
                             break;
                         }
+
                     }//while
                 }
             } catch (IOException e) {
@@ -1121,9 +1137,9 @@ public class MainActivity extends AppCompatActivity {
                     */
 
             long speed = (long)fspeed;
-            String strOtaProgress = String.format("Bytes Transferred:%d/%d=%d \nTransfer Speed:%d Bytes/Sec \nTime:%d Seconds",
-                    ota_current_bytes_transferred, ota_total_file_length, percent, speed, (int)(System.currentTimeMillis() - ota_started_time)/1000);
-
+            int seconds = (int)(System.currentTimeMillis() - ota_started_time)/1000;
+            String strOtaProgress = "Bytes Transferred:"+ota_current_bytes_transferred+"/"+ota_total_file_length+"" +
+                    "="+percent+"\nTransfer Speed:"+speed+" Bytes/Sec \nTime:"+seconds+" Seconds";
             textViewLog.setText(screenLogMsgforOTA + strOtaProgress);
             Log.e(TAG, "OTA Progress:"+ strOtaProgress );
             ota_delta_duration = System.currentTimeMillis();
@@ -1477,6 +1493,7 @@ public class MainActivity extends AppCompatActivity {
                 Message msg = new Message();
                 msg.what = MSG_SUB_NOTIFY;
                 mHandler.sendMessage(msg);
+                setLogMessage("MTU GOT:"+MTU_SIZE_GOT, TEXT_APPEND);
             }
         }
     };
