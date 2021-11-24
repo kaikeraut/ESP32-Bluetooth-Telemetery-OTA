@@ -11,7 +11,9 @@ import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
 import android.os.Binder;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 
 import java.util.List;
@@ -96,6 +98,7 @@ public class BluetoothLeService extends Service {
             Log.e(TAG, "Unable to obtain a BluetoothAdapter.");
             return false;
         }
+        Log.d(TAG, "initialize: bluetooth Adapter done ");
         return true;
     }
     public boolean connect(final String address) {
@@ -109,7 +112,20 @@ public class BluetoothLeService extends Service {
             Log.d(TAG, "Trying to create a new connection. Address:"+address);
             final BluetoothDevice device = mBluetoothAdapter.getRemoteDevice(address);
             // connect to the GATT server on the device
-            mBluetoothGatt = device.connectGatt(this, false, bluetoothGattCallback);
+            //mBluetoothGatt = device.connectGatt(this, true, bluetoothGattCallback);
+            Handler handler = new Handler(Looper.getMainLooper());
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+
+
+                    if (device != null) {
+                        Log.d(TAG, "run: connectGatt");
+                        mBluetoothGatt = device.connectGatt(getApplicationContext(), false, bluetoothGattCallback);
+                        //scanLeDevice(false);// will stop after first device detection
+                    }
+                }
+            });
             mBluetoothDeviceAddress = address;
             mConnectionState = STATE_CONNECTING;
             return true;

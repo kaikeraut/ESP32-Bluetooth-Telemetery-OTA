@@ -140,7 +140,7 @@ public class MainActivity extends AppCompatActivity {
     BluetoothGattCharacteristic characEsp32 = null;
 
     private int OtaTransferSuccessCheckUpdateStatus = 0;
-    private final static String OTA_FILE_NAME = "ota_sample_bin.bin";
+    private final static String OTA_FILE_NAME = "dxe_ota_file.bin";
     private final static String ESP32_MAC = "24:0A:C4:FA:41:32";
     private final static String WRITE_SERVICE_UUID = "000000ff-0000-1000-8000-00805f9b34fb";
     private final static String WRITE_CHAR_UUID =  "0000ff01-0000-1000-8000-00805f9b34fb";
@@ -212,7 +212,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
     private String deviceAddress;
     private String deviceFirmwareVersion="";
     private String downloadFwVer="";
-
+    long totalOtaTime = 0;
 
     void setOTA_Abort(int value){
         abortOTAProcess = value;
@@ -334,6 +334,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         btnOTA.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                setLogMessage("OTA PROCESS: START", TEXT_NOT_APPEND);
                 OtaTransferSuccessCheckUpdateStatus = 0;
                 setOTA_Abort(OTA_ERROR_DEFAULT);
                 String otaFolderPath = "";
@@ -371,12 +372,20 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                     otaDir.mkdir();
                 }
                 Log.d(TAG, "onClick: len:" + otaDir.length() + " isDir:"+otaDir.isDirectory());
+                Log.e(TAG, "startOtaRequestAndFilePath: canRead:" + otaDir.canRead());
+                Log.e(TAG, "startOtaRequestAndFilePath: canWrite:" + otaDir.canWrite());
+                Log.e(TAG, "startOtaRequestAndFilePath: canExecute:" + otaDir.canExecute());
+                if(otaDir.canRead() == false){
+                    setLogMessage("OTA DIR: READ ACCESS DENIED", TEXT_APPEND);
+                }else{
+                    setLogMessage("OTA DIR: READ ACCESS PRESENT", TEXT_APPEND);
+                }
                 File[] files = otaDir.listFiles();
                 int filesFound = 0;
                 if(files != null){
                     filesFound = files.length;
                 }
-                Log.d("Files", "Size: "+ filesFound);
+                Log.d("Files", "Found Size: "+ filesFound);
                 for (int i = 0; i < filesFound; i++)
                 {
                     Log.d("Files", "FileName:" + files[i].getName());
@@ -384,7 +393,8 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                     Log.d(TAG, "onClick: file len:"+ files[i].length());
                 }
                 if(filesFound == 0) {
-                    setLogMessage("Copy OTA File to  below location and Start Again:" + otaFolderPath, TEXT_APPEND);
+                    setLogMessage("Copy OTA File to  below location and Start Again:\n" + otaFolderPath, TEXT_APPEND);
+                    setLogMessage("\nRename file OTA file to: "+OTA_FILE_NAME, TEXT_APPEND);
                 }else {
                     Message msg = new Message();
                     msg.what = MSG_GET_FW_DETAILS;
@@ -636,7 +646,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             Log.d(TAG, "onScanResult: res:"+ res);
             if(res == false) {
                 bleScanMacNameMap.put(result.getDevice().getAddress(), result.getDevice().getName());
-                setLogMessage("Device Name: " + result.getDevice().getName() + " MAC:" + result.getDevice().getAddress(), TEXT_APPEND);
+                setLogMessage("Device Name: " + result.getDevice().getName() + "\n MAC:" + result.getDevice().getAddress(), TEXT_APPEND);
                 setLogMessage("", TEXT_APPEND);
                 bleScanCount++;
                 Log.d("BLE SCANING", "Device Name: " + result.getDevice().getName() + " MAC:" + result.getDevice().getAddress() + " rssi: " + result.getRssi());
@@ -645,8 +655,8 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             {
                 stopScanning();
                 scannerTimer.cancel();
-                setLogMessage("Device Found:"+bleScanCount+"\n", TEXT_APPEND);
-                //Log.e(TAG, "DEVICE FOUND MESSSAGE: 3" );
+                setLogMessage("Device Found:"+bleScanCount+"\n Matching MAC found !!", TEXT_APPEND);
+                Log.e(TAG, "DEVICE FOUND MESSSAGE: " + esp32MACAddr);
                 btnScan.setText(strScanStart);
 
                 Message msg = new Message();
@@ -722,19 +732,24 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             return;
         }
 
+
         otaFolderPath += "DXe-OTA" + File.separator;
         Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
 
         otaDir = new File(otaFolderPath);
+        Log.e(TAG, "startOtaRequestAndFilePath: canRead:" + otaDir.canRead());
+        Log.e(TAG, "startOtaRequestAndFilePath: canWrite:" + otaDir.canWrite());
+        Log.e(TAG, "startOtaRequestAndFilePath: canExecute:" + otaDir.canExecute());
         if(!otaDir.exists()){
             otaDir.mkdir();
+            Log.d(TAG, "startOtaRequestAndFilePath: CREATING OTA DIR" + otaFolderPath);
         }
         File[] files = otaDir.listFiles();
         int filesFound = 0;
         if(files != null){
             filesFound = files.length;
         }
-        Log.d("Files", "Size: "+ filesFound);
+        Log.d("Files", "Files Found: "+ filesFound);
         for (int i = 0; i < filesFound; i++)
         {
             Log.d("Files", "FileName:" + files[i].getName());
@@ -801,7 +816,8 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             otaPacketCount++;
             long otaEndtime = System.currentTimeMillis();
             Log.d(TAG, "sendOTA_Packet: TIME TO COMPLETE(sec):"+ (otaEndtime - otaStartTime)/1000);
-            setLogMessage("TOTAL OTA TIME:"+(otaEndtime - otaStartTime)/1000, TEXT_APPEND);
+            totalOtaTime = (otaEndtime - otaStartTime)/1000;
+
             data = new byte[BT_HEADER_END_INDEX+1];
             data[BT_HEADER_START_INDEX] = (byte) BT_MSG_HEADER_FIRST_BYTE;
             data[BT_HEADER_MSG_TYPE_INDEX] = BT_MSG_HEADER_MSG_TYPE_OTA;
@@ -906,6 +922,8 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
         btnOTA.setClickable(false);
         btnTelemetry.setClickable(false);
+        btnScan.setClickable(false);
+        btnScan.setVisibility(View.INVISIBLE);
 
         int totalBytesSent = 0;
         boolean validFirmwareVerCheck = true;
@@ -932,7 +950,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                         }
                         ota_current_bytes_transferred = totalBytesSent;
                         bytesOffset = bytesOffset + lenToSend;
-                        Log.d(TAG, "startOTAProcess: WAIT CALLBACK:" + System.currentTimeMillis());
+                        Log.d(TAG, "0 startOTAProcess: WAIT CALLBACK:" + System.currentTimeMillis());
                         while (true) {
                             if (oncharactersticsWriteCount == 0) break;
                             else {
@@ -969,7 +987,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 sendOTA_Packet(MSG_OTA_PROCESS_DUMMY, 0, null);
             }//for loop
 
-            Log.d(TAG, "startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
+            Log.d(TAG, "1 startOTAProcess: WAIT CALLBACK:"+System.currentTimeMillis());
             if(validFirmwareVerCheck == true) {
                 for(int i = 0; i < 2; i++) {
                     while (true) {
@@ -986,7 +1004,8 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
                     sendOTA_Packet(MSG_OTA_COMPLETE, totalBytesSent, null);
                 }
-                buf.close();
+                Log.d(TAG, "startOTAProcess: MSG_OTA_COMPLETE sent ");
+                buf.close();/*
                 while (true) { // Wait for final Success full Write callback
                     if (oncharactersticsWriteCount == 0) break;
                     else {
@@ -996,7 +1015,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                             e.printStackTrace();
                         }
                     }
-                }//while(1)
+                }//while(1)*/
                 Log.d(TAG, "startOTAProcess: Wait for DXe Reboot");
                 Message msg = new Message();
                 msg.what = MSG_WAIT_OTA_COMPLETION;
@@ -1005,11 +1024,14 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         } catch (FileNotFoundException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
+            Log.e(TAG, "startOTAProcess: CRASH" +e );
         } catch (IOException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
+            Log.e(TAG, "startOTAProcess: CRASH" +e );
         }
         Log.d(TAG, "startOTAProcess: OTA PROCESS COMPLETES ************");
+        setLogMessage("TOTAL OTA TIME:"+totalOtaTime, TEXT_APPEND);
     }
 
     /************** OTA ENDS ********************/
@@ -1241,6 +1263,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             // Log.d(TAG, "processRecvdData: "+i+":"+value[i]);
             value[i] = (byte) (value[i] & 0xFF);
         }
+        Log.d(TAG, "processRecvdData: [RCVD]::" + bytesToHexString(value));
         Log.d(TAG, "processRecvdData: "+String.format("%x %x %x %x %x %x %x %x", value[0], value[1],value[2],value[3],value[4],value[5],value[6],value[7]));
 
         if(((value[BT_HEADER_START_INDEX] & 0XFF) == BT_MSG_HEADER_FIRST_BYTE) &&  ((value[BT_HEADER_END_INDEX] & 0xFF)== BT_MSG_HEADER_LAST_BYTE)){
@@ -1261,8 +1284,9 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             {
                 Log.e(TAG, "processRecvdData: RECVD OTA ABORT MESSAGE");
                 int errorCode =  (value[BT_HEADER_END_INDEX+1] | (value[BT_HEADER_END_INDEX+2] << 8)) ;
-                Log.e(TAG, "processRecvdData: Error Code"+ String.format("%x", errorCode));
+                Log.e(TAG, "processRecvdData: Error Code:"+ String.format("%x", errorCode));
                 setOTA_Abort(OTA_ERROR_CODE_INTERNAL_ERROR);
+                setLogMessage("RECVD OTA ABORT MESSAGE: 0x"+String.format("%x", errorCode), TEXT_APPEND);
             }
             else if((value[BT_HEADER_MSG_TYPE_INDEX] == BT_MSG_HEADER_MSG_TYPE_FIRM_VER) && (value[BT_HEADER_MSG_ACTION_INDEX] == BT_MSG_HEADER_MSG_ACTION_FW_RESPONSE))
             {
@@ -1349,6 +1373,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             }
         }else{
             Log.e(TAG, "processRecvdData: Wrong Header");
+            setLogMessage("WRONG HEADER:"+bytesToHexString(value), TEXT_APPEND);
         }
         if(OtaTransferSuccessCheckUpdateStatus == 1){
             setLogMessage("OTA: DXe connected.. Checking Firmware", TEXT_APPEND);
@@ -1405,7 +1430,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                             CountDownTimer cnt = new CountDownTimer(30000, 1000) {
                                 @Override
                                 public void onTick(long l) {
-
+                                    Log.d(TAG, "onTick: REBOOT COUNTER:"+ l/1000);
                                 }
 
                                 @Override
