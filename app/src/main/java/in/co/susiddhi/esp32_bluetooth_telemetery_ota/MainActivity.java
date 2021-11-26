@@ -34,6 +34,7 @@ import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Binder;
@@ -84,6 +85,8 @@ import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE;
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
 
 public class MainActivity extends AppCompatActivity {
+    private static final int STORAGE_PERMISSION_CODE = 101;
+
     public static final int PICKFILE_RESULT_CODE            = 1;
     private static final int MY_PERMISSION_REQUEST_CODE     = 1001;
     public final static int MTU_SIZE_REQUESTED              = 500;
@@ -257,25 +260,16 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         esp32BluetoothStatus = BLUETOOTH_DISCONNECTED;
         esp32MACAddr = sharedPreferences.getString(PREF_MAC_KEY, "");
         editTextMAC.setText(esp32MACAddr);
-
+/*
         ActivityCompat.requestPermissions( this, new String[]{
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
         }, 0);
+*/
+        //checkPermission(Manifest.permission.ACCESS_FINE_LOCATION, MY_PERMISSION_REQUEST_CODE);
+        //checkPermission(Manifest.permission.ACCESS_FINE_LOCATION, MY_PERMISSION_REQUEST_CODE);
+        checkPermission(Manifest.permission.READ_EXTERNAL_STORAGE, STORAGE_PERMISSION_CODE);
 
-        ActivityCompat.requestPermissions( this, new String[]{
-                Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE,
-        }, MY_PERMISSION_REQUEST_CODE);
-
-        //verifyStoragePermissions(MainActivity.this);
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
-        }
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1);
-        }
         InputFilter[] macAddressFilters = new InputFilter[1];
 
         // Bluetooth Start **********************************************
@@ -452,6 +446,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         btnScan.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                Log.d(TAG, "onClick BTN SCAN:mConnected: " + mConnected);
                 if(mConnected == true){
                     bluetoothService.disconnect();
                     return;
@@ -512,6 +507,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
         esp32MessageHandler();
         //checkDownloadedFirmwareDetails();
+        statusCheck();
     }//OnCreate
 
 
@@ -534,63 +530,52 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         return ((path == null || path.isEmpty()) ? (uri.getPath()) : path);
     }
 
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        switch (requestCode) {
-            case PICKFILE_RESULT_CODE:
-                if (resultCode == -1) {
-                    otaFileUri = data.getData();
-                    Log.d(TAG, "onActivityResult: type:"+data.getType() + " uri:"+otaFileUri);
-                    otaFilePath = otaFileUri.getPath();
-                    Log.e(TAG, "onActivityResult: path:"+getPath1(otaFileUri) );
-                    setLogMessage("PATH:" + otaFilePath, TEXT_APPEND);
+    /********* PERMISSIONS ENDS **********/
+    public void statusCheck() {
+        final LocationManager manager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
 
-                    String src = otaFileUri.getPath();
-                    //String src = getPath1(otaFileUri);
-                    File source = new File(src);
-                    Log.d(TAG, "onActivityResult: FILE EXITS:"+ source.exists());
+        if (!manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            buildAlertMessageNoGps();
 
-                    //String filename = otaFileUri.getLastPathSegment();
-                    //File destination = new File(Environment.getExternalStorageDirectory().getAbsolutePath() + "/CustomFolder/" + filename);
-
-                   /*
-                    Message msg = new Message();
-                    msg.what = MSG_PROCESS_START_OTA;
-                    msg.obj = otaFilePath;
-                    mHandler.sendMessage(msg);
-                    /*
-                    */
-                }
-
-                break;
         }
     }
 
-    /********* PERMISSIONS ENDS **********/
+    private void buildAlertMessageNoGps() {
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setMessage("Your GPS seems to be disabled, do you want to enable it?")
+                .setCancelable(false)
+                .setPositiveButton("Yes", new DialogInterface.OnClickListener() {
+                    public void onClick(final DialogInterface dialog, final int id) {
+                        startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+                    }
+                })
+                .setNegativeButton("No", new DialogInterface.OnClickListener() {
+                    public void onClick(final DialogInterface dialog, final int id) {
+                        dialog.cancel();
+                    }
+                });
+        final AlertDialog alert = builder.create();
+        alert.show();
+    }
+    // Function to check and request permission.
+    public void checkPermission(String permission, int requestCode)
+    {
+        if (ContextCompat.checkSelfPermission(MainActivity.this, permission) == PackageManager.PERMISSION_DENIED) {
 
-    public static void verifyStoragePermissions(Activity activity) {
-        // Check if we have write permission
-        int permission = ActivityCompat.checkSelfPermission(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE);
+            // Requesting the permission
+            //ActivityCompat.requestPermissions(MainActivity.this, new String[] { permission }, requestCode);
+            String[] PERMISSIONS = {
 
-        if (permission != PackageManager.PERMISSION_GRANTED) {
-            // We don't have permission so prompt the user
-            ActivityCompat.requestPermissions(
-                    activity,
-                    PERMISSIONS_STORAGE,
-                    REQUEST_EXTERNAL_STORAGE
-            );
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+            };
+            ActivityCompat.requestPermissions(MainActivity.this, PERMISSIONS, requestCode);
+            Log.e(TAG, "checkPermission: Requesting permission:"+permission);
         }
-
-        permission = ActivityCompat.checkSelfPermission(activity, Manifest.permission.READ_EXTERNAL_STORAGE);
-
-        if (permission != PackageManager.PERMISSION_GRANTED) {
-            // We don't have permission so prompt the user
-            ActivityCompat.requestPermissions(
-                    activity,
-                    PERMISSIONS_STORAGE,
-                    REQUEST_EXTERNAL_STORAGE
-            );
+        else {
+            Toast.makeText(MainActivity.this, "Permission already granted", Toast.LENGTH_SHORT).show();
         }
     }
     @Override
@@ -598,14 +583,22 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                                            String permissions[], int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         //if(grantResults.length == 0) return;
-        Log.d(TAG, "onRequestPermissionsResult: requestCode:"+ requestCode + " grantResults.length:"+grantResults.length);
+        Log.e(TAG, "onRequestPermissionsResult: requestCode:"+ requestCode + " grantResults.length:"+grantResults.length);
         switch (requestCode) {
             case MY_PERMISSION_REQUEST_CODE:
                 if(grantResults.length > 0 && grantResults[0] ==
                         PackageManager.PERMISSION_GRANTED)
                     //Do your work
-                    Log.d(TAG, "onRequestPermissionsResult: STORAGE access granted");
+                    Log.d(TAG, "onRequestPermissionsResult:  access granted");
                     break;
+            case STORAGE_PERMISSION_CODE:
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Toast.makeText(MainActivity.this, "Storage Permission Granted", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(MainActivity.this, "Storage Permission Denied", Toast.LENGTH_SHORT).show();
+                }
+                break;
             case PERMISSION_REQUEST_COARSE_LOCATION: {
                 if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     Log.d(TAG, ("coarse location permission granted"));
@@ -614,6 +607,8 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 }
                 return;
             }
+            default:
+                Log.e(TAG, "onRequestPermissionsResult: DEFAULT REQUEST CODE"+ requestCode );
         }
     }
 
@@ -924,6 +919,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         btnTelemetry.setClickable(false);
         btnScan.setClickable(false);
         btnScan.setVisibility(View.INVISIBLE);
+
 
         int totalBytesSent = 0;
         boolean validFirmwareVerCheck = true;
@@ -1438,6 +1434,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                                     setLogMessage("Trying to Connect to DXe...", TEXT_APPEND);
                                     OtaTransferSuccessCheckUpdateStatus = 1;
                                     bluetoothService.connect(esp32MACAddr);
+                                    btnScan.setVisibility(View.VISIBLE);
                                 }
                             }.start();
                             break;
