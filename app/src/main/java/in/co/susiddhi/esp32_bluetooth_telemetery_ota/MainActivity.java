@@ -216,6 +216,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
     private String deviceFirmwareVersion="";
     private String downloadFwVer="";
     long totalOtaTime = 0;
+    private boolean isManualDisconnected;
 
     void setOTA_Abort(int value){
         abortOTAProcess = value;
@@ -243,6 +244,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         sharedPreferences = this.getSharedPreferences("in.co.susiddhi.esp32_ble_tele_ota", Context.MODE_PRIVATE);
         intTelemetryStarted = 0;
         intScanning = 0;
+        isManualDisconnected = false;
         textViewLog = (TextView)findViewById(R.id.textViewLogData);
         btnOTA = (Button) findViewById(R.id.button3OTA);
         btnTelemetry = (Button) findViewById(R.id.button2Telemetry);
@@ -438,8 +440,12 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 if(bluetoothService != null) {
                     bluetoothService.disconnect();
                 }
+
                 Toast.makeText(getApplicationContext(), "DISCONNECTING BLE", Toast.LENGTH_SHORT).show();
                 Log.d(TAG, "onLongClick: DISCONNECT BLE END ");
+                finish();
+                Intent ble = new Intent(getApplicationContext(), MainActivity.class);
+                startActivity(ble);
                 return false;
             }
         });
@@ -448,7 +454,11 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             public void onClick(View v) {
                 Log.d(TAG, "onClick BTN SCAN:mConnected: " + mConnected);
                 if(mConnected == true){
-                    bluetoothService.disconnect();
+                    if(bluetoothService != null) {
+                        bluetoothService.disconnect();
+                        intScanning = 0;
+                    }
+                    isManualDisconnected = true;
                     return;
                 }
                 bleScanCount = 0;
@@ -542,7 +552,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
     private void buildAlertMessageNoGps() {
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setMessage("Your GPS seems to be disabled, do you want to enable it?")
+        builder.setMessage("Your Location Service seems to be disabled, Enable for Bluetooth Scanning?")
                 .setCancelable(false)
                 .setPositiveButton("Yes", new DialogInterface.OnClickListener() {
                     public void onClick(final DialogInterface dialog, final int id) {
@@ -575,7 +585,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             Log.e(TAG, "checkPermission: Requesting permission:"+permission);
         }
         else {
-            Toast.makeText(MainActivity.this, "Permission already granted", Toast.LENGTH_SHORT).show();
+            //Toast.makeText(MainActivity.this, "Permission already granted", Toast.LENGTH_SHORT).show();
         }
     }
     @Override
@@ -1369,7 +1379,11 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             }
         }else{
             Log.e(TAG, "processRecvdData: Wrong Header");
-            setLogMessage("WRONG HEADER:"+bytesToHexString(value), TEXT_APPEND);
+            if((value[0] == 0) && (value[1] == 0x1) && (value[2] == 0x02) && (value[3] == 0x3)){
+                setLogMessage("Notification Enabled", TEXT_APPEND);
+            }else {
+                setLogMessage("WRONG HEADER:" + bytesToHexString(value), TEXT_APPEND);
+            }
         }
         if(OtaTransferSuccessCheckUpdateStatus == 1){
             setLogMessage("OTA: DXe connected.. Checking Firmware", TEXT_APPEND);
@@ -1497,6 +1511,11 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 Toast.makeText(getApplicationContext(), "DXE DISCONNECTED", Toast.LENGTH_SHORT).show();
                 btnOTA.setVisibility(View.GONE);
                 btnTelemetry.setVisibility(View.GONE);
+                if(isManualDisconnected == true){
+                    finish();
+                    Intent ble = new Intent(MainActivity.this, MainActivity.class);
+                    startActivity(ble);
+                }
             }
             else if(BluetoothLeService.ACTION_CHARACTERISTICS_CHANGED.equals(action)){
                 //Log.d(TAG, "onReceive: DATA:"+intent.getStringExtra(BluetoothLeService.EXTRA_DATA));
