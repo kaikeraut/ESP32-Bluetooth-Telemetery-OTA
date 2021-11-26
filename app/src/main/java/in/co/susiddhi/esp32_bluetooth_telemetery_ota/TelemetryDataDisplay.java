@@ -73,7 +73,7 @@ public class TelemetryDataDisplay extends AppCompatActivity {
                 File sensorData = new File(dxeFolderPath);
                 if (!sensorData.exists()) {
                     Log.e(TAG, "onClick: otaFolderPath doesn't Exist:" + dxeFolderPath);
-                    sensorData.mkdir();
+                    sensorData.mkdirs();
                 }
                 Calendar cal = Calendar.getInstance();
                 String fileName = "SensorData_"+ String.format("%04d%02d%02d_%02d%02d", cal.get(Calendar.YEAR),
@@ -182,12 +182,12 @@ public class TelemetryDataDisplay extends AppCompatActivity {
         try {
             jObject = new JSONObject(strPayload);
             String speed = jObject.getString("speed");
-            String vibration = jObject.getString("vibra");
+            String vibration = jObject.getString("bootc");
             String temp = jObject.getString("tempe");
-
-            long lSpeed = Long.parseLong(speed, 16);
-            long lVibration = Long.parseLong(vibration, 16);
-            long lTemp = Long.parseLong(temp, 16);
+//{"tempe":02905,"speed":00000,"bootc":00029}
+            int lSpeed = Integer.parseInt(speed);
+            int lVibration = Integer.parseInt(vibration);
+            int lTemp = Integer.parseInt(temp);
             Log.d(TAG, "processTheTelemetryPayload: speed:"+ lSpeed + " Vibration:"+lVibration + " Temp:"+lTemp);
             displaySensorData(lSpeed, lVibration, lTemp);
         } catch (JSONException e) {
@@ -203,17 +203,20 @@ public class TelemetryDataDisplay extends AppCompatActivity {
         return "<font color=#cc0029><b>"+str1+"</b></font> <br/><font color=#ffcc00>"+str2+"</font>";
     }
     void displaySensorData(long speed, long vibration, long temperature){
-        tvTemperature.setText("Temperature\n"+temperature+" \u2103");
+        float fTemp = (float)temperature/100;
+        float fSpeed = speed/10;
+        Log.d(TAG, "displaySensorData: fTemp:"+fTemp);
+        tvTemperature.setText("Temperature\n"+fTemp+" \u2103");
         tvTemperature.setTypeface(null, Typeface.BOLD);
         tvTemperature.setTextColor(Color.BLUE);
 
-        tvSpeed.setText("Speed\n"+speed);
+        tvSpeed.setText("Speed\n"+fSpeed + "  1/min");
         tvSpeed.setTypeface(null, Typeface.ITALIC);
         tvSpeed.setTextColor(Color.MAGENTA);
 
-        tvVibration.setText("Vibration\n"+vibration);
+        tvVibration.setText("Boot Count:\n"+vibration);
         tvVibration.setTypeface(null, Typeface.ITALIC);
-        tvVibration.setTextColor(Color.MAGENTA);
+        tvVibration.setTextColor(Color.GREEN);
     }
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {

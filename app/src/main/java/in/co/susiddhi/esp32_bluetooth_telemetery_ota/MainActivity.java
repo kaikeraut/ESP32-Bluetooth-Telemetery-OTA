@@ -84,6 +84,9 @@ import javax.security.auth.login.LoginException;
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE;
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 public class MainActivity extends AppCompatActivity {
     private static final int STORAGE_PERMISSION_CODE = 101;
     public static final String DXE_FOLDER_PARENT_NAME = "DXeTestApp";
@@ -236,6 +239,27 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
     //***** Bluetooth  Details ****
 
+    void parseeTry()
+    {
+        try {
+            JSONObject jObject = new JSONObject("{\"tempe\":\"02905\",\"speed\":0,\"bootc\":29}");
+        String speed = jObject.getString("speed");
+        String vibration = jObject.getString("bootc");
+        String temp = jObject.getString("tempe");
+            Log.d(TAG, "processTheTelemetryPayload:11 speed:"+ speed + " Vibration:"+vibration + " Temp:"+temp);
+//{"tempe":02905,"speed":00000,"bootc":00029}
+        int lSpeed = Integer.parseInt(speed);
+        int lVibration = Integer.parseInt(vibration);
+        int lTemp = Integer.parseInt(temp);
+        Log.d(TAG, "processTheTelemetryPayload: speed:"+ lSpeed + " Vibration:"+lVibration + " Temp:"+lTemp);
+        //displaySensorData(lSpeed, lVibration, lTemp);
+    } catch (JSONException e) {
+        e.printStackTrace();
+    }
+        catch (Exception e){
+            Log.e(TAG, "parseeTry: " +e  );
+        }
+    }
     SharedPreferences sharedPreferences = null;
     String PREF_MAC_KEY =  "in.co.susiddhi.esp32_ble_tele_ota_MAC";
     @RequiresApi(api = Build.VERSION_CODES.M)
@@ -244,6 +268,8 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         sharedPreferences = this.getSharedPreferences("in.co.susiddhi.esp32_ble_tele_ota", Context.MODE_PRIVATE);
+        //parseeTry();
+
         intTelemetryStarted = 0;
         intScanning = 0;
         telemetryInterval = 5;
