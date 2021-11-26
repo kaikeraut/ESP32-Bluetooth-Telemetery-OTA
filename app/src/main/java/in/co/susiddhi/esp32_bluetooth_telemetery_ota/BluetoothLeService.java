@@ -76,6 +76,7 @@ public class BluetoothLeService extends Service {
             Log.w(TAG, "BluetoothAdapter not initialized");
             return;
         }
+        Log.e(TAG, "disconnect: BluetoothGatt Disconnect " );
         mBluetoothGatt.disconnect();
         close();
     }
@@ -86,6 +87,8 @@ public class BluetoothLeService extends Service {
         }
         mBluetoothGatt.close();
         mBluetoothGatt = null;
+        Log.d(TAG, "close: MANUALLY CALLING DISCONNECT");
+        broadcastUpdate(ACTION_GATT_DISCONNECTED);
     }
     class LocalBinder extends Binder {
         public BluetoothLeService getService() {

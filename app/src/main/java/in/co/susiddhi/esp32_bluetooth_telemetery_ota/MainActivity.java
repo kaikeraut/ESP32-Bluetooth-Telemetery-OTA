@@ -86,7 +86,8 @@ import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
 
 public class MainActivity extends AppCompatActivity {
     private static final int STORAGE_PERMISSION_CODE = 101;
-
+    public static final String DXE_FOLDER_PARENT_NAME = "DXeTestApp";
+    public static final String DXE_FOLDER_OTA = "DXe-OTA";
     public static final int PICKFILE_RESULT_CODE            = 1;
     private static final int MY_PERMISSION_REQUEST_CODE     = 1001;
     public final static int MTU_SIZE_REQUESTED              = 500;
@@ -217,6 +218,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
     private String downloadFwVer="";
     long totalOtaTime = 0;
     private boolean isManualDisconnected;
+    private int telemetryInterval = 5;
 
     void setOTA_Abort(int value){
         abortOTAProcess = value;
@@ -244,6 +246,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         sharedPreferences = this.getSharedPreferences("in.co.susiddhi.esp32_ble_tele_ota", Context.MODE_PRIVATE);
         intTelemetryStarted = 0;
         intScanning = 0;
+        telemetryInterval = 5;
         isManualDisconnected = false;
         textViewLog = (TextView)findViewById(R.id.textViewLogData);
         btnOTA = (Button) findViewById(R.id.button3OTA);
@@ -337,13 +340,13 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 File otaDir = null;
                 try {
                     otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                            + File.separator + "documents" + File.separator;
+                            + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
                     otaDir = new File(otaFolderPath);
                     if (!otaDir.exists()) {
                         Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
-                        //otaDir.mkdir();
+                        otaDir.mkdir();
                         otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                                + File.separator + "Documents" + File.separator;
+                                + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
                         otaDir = new File(otaFolderPath);
                         if (!otaDir.exists()) {
                             Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
@@ -359,7 +362,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 progressBarOTA.setVisibility(View.VISIBLE);
                 Log.d(TAG, "onClick: OTA Click");
 
-                otaFolderPath += "DXe-OTA" + File.separator;
+                otaFolderPath += DXE_FOLDER_OTA + File.separator;
                 Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
 
                 otaDir = new File(otaFolderPath);
@@ -411,9 +414,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                     btnTelemetry.setText(strTelemetryStop);
                     setLogMessage("Telemetry Started", TEXT_APPEND);
                     intTelemetryStarted = 1;
-                    Message msg = new Message();
-                    msg.what = MSG_START_TELEMETRY;
-                    mHandler.sendMessage(msg);
+                    getTelemetryFrequency();
 
                 } else {
                     btnTelemetry.setText(strTelemetryStart);
@@ -518,6 +519,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         esp32MessageHandler();
         //checkDownloadedFirmwareDetails();
         statusCheck();
+
     }//OnCreate
 
 
@@ -550,6 +552,46 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         }
     }
 
+    void getTelemetryFrequency()
+    {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Enter Telemetry Receive Interval (in Seconds 1-10)");
+
+// Set up the input
+        final EditText input = new EditText(this);
+// Specify the type of input expected; this, for example, sets the input as a password, and will mask the text
+        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        builder.setView(input);
+
+// Set up the buttons
+        builder.setPositiveButton("OK", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                telemetryInterval = Integer.parseInt(String.valueOf(input.getText()));
+                Log.e(TAG, "onClick: Telemtry interval:" + telemetryInterval);
+                if((telemetryInterval == 0) || (telemetryInterval > 200)){
+                    telemetryInterval = 5;
+                }
+                setLogMessage("Telemetry Frequency: " + telemetryInterval + " Seconds", TEXT_APPEND);
+                Message msg = new Message();
+                msg.what = MSG_START_TELEMETRY;
+                mHandler.sendMessage(msg);
+            }
+        });
+        builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.cancel();
+                telemetryInterval = 5;
+                setLogMessage("Using Default Telemetry Frequency: 5 Seconds", TEXT_APPEND);
+                Message msg = new Message();
+                msg.what = MSG_START_TELEMETRY;
+                mHandler.sendMessage(msg);
+            }
+        });
+
+        builder.show();
+    }
     private void buildAlertMessageNoGps() {
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setMessage("Your Location Service seems to be disabled, Enable for Bluetooth Scanning?")
@@ -1091,12 +1133,15 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
             data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
             data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_START;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
-            data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
+            byte[] interval = ByteBuffer.allocate(4).putInt(telemetryInterval).array();
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = interval[0];
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = interval[1];
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = interval[2];
+            data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = interval[3];
             data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
             btnOTA.setClickable(false);
+            Intent intent = new Intent(getApplicationContext(), TelemetryDataDisplay.class);
+            startActivity(intent);
         }else{
             data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
             data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
@@ -1119,6 +1164,19 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         return status1;
     }
 
+    public static byte[] getStopTelemetryBytes()
+    {
+        byte[] data = new byte[BT_HEADER_END_INDEX+1];
+        data[BT_HEADER_START_INDEX] = (byte)BT_MSG_HEADER_FIRST_BYTE;
+        data[BT_HEADER_MSG_TYPE_INDEX] =BT_MSG_HEADER_MSG_TYPE_TELEMETRY;
+        data[BT_HEADER_MSG_ACTION_INDEX] = BT_MSG_HEADER_MSG_ACTION_END;
+        data[BT_HEADER_PAYLOAD_LENGTH_INDEX0] = 0;
+        data[BT_HEADER_PAYLOAD_LENGTH_INDEX1] = 0;
+        data[BT_HEADER_PAYLOAD_LENGTH_INDEX2] = 0;
+        data[BT_HEADER_PAYLOAD_LENGTH_INDEX3] = 0;
+        data[BT_HEADER_END_INDEX] = (byte)BT_MSG_HEADER_LAST_BYTE;
+        return data;
+    }
     /******* TELEMETRY ENDS ***************/
     public  String bytesToHexString(byte[] data){
         StringBuffer result = new StringBuffer();
@@ -1142,7 +1200,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         String currMsg = textViewLog.getText().toString()+"\n";
         //Log.d(TAG, "setLogMessage: "+Message);
         if(append == TEXT_APPEND) {
-            textViewLog.setText(currMsg + Message);
+            textViewLog.append("\n"+Message);
         }else if(append == TEXT_OTA_PERCENT){
             if(screenLogMsgforOTA.length() == 0){
                 ota_started_time = System.currentTimeMillis();
@@ -1183,12 +1241,12 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         File otaDir;
         try {
              otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                    + File.separator + "documents/" + File.separator;
+                    + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
             otaDir = new File(otaFolderPath);
             if (!otaDir.exists()) {
-                //otaDir.mkdir();
+                otaDir.mkdir();
                 otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                        + File.separator + "Documents/";
+                        + File.separator + DXE_FOLDER_PARENT_NAME;
                 otaDir = new File(otaFolderPath);
                 if (otaDir.exists()) {
 
@@ -1198,7 +1256,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             Log.e(TAG, "onClick: " + e);
         }
 
-        otaFolderPath += "DXe-OTA" + File.separator;
+        otaFolderPath += DXE_FOLDER_OTA + File.separator;
         otaFolderPath = otaFolderPath + OTA_FILE_NAME;
         Log.d(TAG, "checkDownloadedFirmwareDetails: OTA file PAth::"+ otaFolderPath);
         File file = new File(otaFolderPath);
@@ -1461,7 +1519,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
     /***** SERVICE **/
 
-    private BluetoothLeService bluetoothService;
+    public static BluetoothLeService bluetoothService;
 
     void startGATTbacllbackService()
     {
