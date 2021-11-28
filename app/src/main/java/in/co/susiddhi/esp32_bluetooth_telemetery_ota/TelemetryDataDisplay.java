@@ -69,11 +69,23 @@ public class TelemetryDataDisplay extends AppCompatActivity {
             public void onClick(View view) {
 
                 String dxeFolderPath = Environment.getExternalStorageDirectory().getPath()
-                        + File.separator + DXE_FOLDER_PARENT_NAME + File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
+                        + File.separator + DXE_FOLDER_PARENT_NAME ;//+ File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
                 File sensorData = new File(dxeFolderPath);
+                if(sensorData.canRead() == false){
+
+                    Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
+                }
                 if (!sensorData.exists()) {
-                    Log.e(TAG, "onClick: otaFolderPath doesn't Exist:" + dxeFolderPath);
-                    sensorData.mkdirs();
+                    Log.e(TAG, "onClick: otaFolderPath doesn't Exist: Creating folder::" + dxeFolderPath);
+                    sensorData.mkdir();
+                    Log.d(TAG, "onClick: ");
+                }
+                dxeFolderPath += File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
+                sensorData = new File(dxeFolderPath);
+                if (!sensorData.exists()) {
+                    Log.e(TAG, "onClick: otaFolderPath doesn't Exist: Creating folder::" + dxeFolderPath);
+                    sensorData.mkdir();
+
                 }
                 Calendar cal = Calendar.getInstance();
                 String fileName = "SensorData_"+ String.format("%04d%02d%02d_%02d%02d", cal.get(Calendar.YEAR),

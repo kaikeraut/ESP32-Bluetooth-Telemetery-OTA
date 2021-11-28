@@ -239,25 +239,33 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
     //***** Bluetooth  Details ****
 
-    void parseeTry()
+    void CreateDXeFolders()
     {
-        try {
-            JSONObject jObject = new JSONObject("{\"tempe\":\"02905\",\"speed\":0,\"bootc\":29}");
-        String speed = jObject.getString("speed");
-        String vibration = jObject.getString("bootc");
-        String temp = jObject.getString("tempe");
-            Log.d(TAG, "processTheTelemetryPayload:11 speed:"+ speed + " Vibration:"+vibration + " Temp:"+temp);
-//{"tempe":02905,"speed":00000,"bootc":00029}
-        int lSpeed = Integer.parseInt(speed);
-        int lVibration = Integer.parseInt(vibration);
-        int lTemp = Integer.parseInt(temp);
-        Log.d(TAG, "processTheTelemetryPayload: speed:"+ lSpeed + " Vibration:"+lVibration + " Temp:"+lTemp);
-        //displaySensorData(lSpeed, lVibration, lTemp);
-    } catch (JSONException e) {
-        e.printStackTrace();
-    }
-        catch (Exception e){
-            Log.e(TAG, "parseeTry: " +e  );
+        String dxeFolderPath = Environment.getExternalStorageDirectory().getPath()
+                + File.separator + DXE_FOLDER_PARENT_NAME ;//+ File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
+        File sensorData = new File(dxeFolderPath);
+
+        if (!sensorData.exists()) {
+            Log.e(TAG, "onClick: otaFolderPath doesn't Exist: Creating folder::" + dxeFolderPath);
+            sensorData.mkdir();
+            Log.d(TAG, "onClick: ");
+        }
+
+        if(sensorData.canRead() == false){
+
+            Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
+            setLogMessage("Folder Creattion FAILED:: Create Manually\n" + dxeFolderPath , TEXT_APPEND);
+        }else{
+            Log.e(TAG, "CreateDXeFolders: CREATED::: "+dxeFolderPath  );
+        }
+
+
+        dxeFolderPath = Environment.getExternalStorageDirectory().getPath()
+                + File.separator + "Documents" ;//+ File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
+         sensorData = new File(dxeFolderPath);
+        if(sensorData.canRead() == false){
+            Log.e(TAG, "CreateDXeFolders: Cant read:" + dxeFolderPath );
+            Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
         }
     }
     SharedPreferences sharedPreferences = null;
@@ -375,6 +383,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                                 + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
                         otaDir = new File(otaFolderPath);
                         if (!otaDir.exists()) {
+                            otaDir.mkdirs();
                             Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
                         }
                     }
@@ -402,6 +411,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 Log.e(TAG, "startOtaRequestAndFilePath: canExecute:" + otaDir.canExecute());
                 if(otaDir.canRead() == false){
                     setLogMessage("OTA DIR: READ ACCESS DENIED", TEXT_APPEND);
+                    Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
                 }else{
                     setLogMessage("OTA DIR: READ ACCESS PRESENT", TEXT_APPEND);
                 }
@@ -545,7 +555,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         esp32MessageHandler();
         //checkDownloadedFirmwareDetails();
         statusCheck();
-
+        CreateDXeFolders();
     }//OnCreate
 
 
@@ -643,9 +653,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             // Requesting the permission
             //ActivityCompat.requestPermissions(MainActivity.this, new String[] { permission }, requestCode);
             String[] PERMISSIONS = {
-
-                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION
             };
@@ -673,6 +681,12 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 if (grantResults.length > 0
                         && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     Toast.makeText(MainActivity.this, "Storage Permission Granted", Toast.LENGTH_SHORT).show();
+                    String[] PERMISSIONS = {
+                            //android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                    };
+                    ActivityCompat.requestPermissions(MainActivity.this, PERMISSIONS, requestCode);
                 } else {
                     Toast.makeText(MainActivity.this, "Storage Permission Denied", Toast.LENGTH_SHORT).show();
                 }
