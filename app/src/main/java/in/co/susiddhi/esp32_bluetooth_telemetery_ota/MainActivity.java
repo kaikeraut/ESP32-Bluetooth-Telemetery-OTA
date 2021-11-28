@@ -653,7 +653,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             // Requesting the permission
             //ActivityCompat.requestPermissions(MainActivity.this, new String[] { permission }, requestCode);
             String[] PERMISSIONS = {
-                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION
             };
