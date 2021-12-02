@@ -513,10 +513,11 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         statusCheck();
         CreateDXeFolders();
         //otaFolderProcess();
-        if(android.os.Build.VERSION.SDK_INT > 10) {
+        if(android.os.Build.VERSION.SDK_INT > 28) {
             OTA_FILE_NAME = "dxe_ota_file.jpg";
         }
-
+        Log.e(TAG, "onCreate: android.os.Build.VERSION.SDK_INT: "+android.os.Build.VERSION.SDK_INT  );
+        Log.e(TAG, "onCreate: OTA_FILE_NAME:"+OTA_FILE_NAME );
     }//OnCreate
 
     private void otaFolderProcess() {
@@ -1334,7 +1335,13 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         File file = new File(otaFolderPath);
         int fileSize = (int) file.length();
         Log.d(TAG, "checkDownloadedFirmwareDetails: FILE LEN:" + fileSize);
+        if(file.exists()){
+            Log.i(TAG, "checkDownloadedFirmwareDetails: file found:"+otaFolderPath);
+        }else{
+            Log.i(TAG, "checkDownloadedFirmwareDetails: file Not Found:"+otaFolderPath);
+        }
         if(fileSize == 0){
+            setLogMessage("File Not Found:"+otaFolderPath, TEXT_APPEND);
             setLogMessage("FILE SIZE ZERO", TEXT_APPEND);
             return null;
         }
