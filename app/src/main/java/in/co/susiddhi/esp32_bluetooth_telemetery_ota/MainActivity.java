@@ -49,6 +49,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -83,6 +84,7 @@ import javax.security.auth.login.LoginException;
 
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE;
 import static android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY;
+import static android.os.Build.VERSION.SDK_INT;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -147,7 +149,7 @@ public class MainActivity extends AppCompatActivity {
     BluetoothGattCharacteristic characEsp32 = null;
 
     private int OtaTransferSuccessCheckUpdateStatus = 0;
-    private final static String OTA_FILE_NAME = "dxe_ota_file.bin";
+    private static String OTA_FILE_NAME = "dxe_ota_file.bin";
     private final static String ESP32_MAC = "24:0A:C4:FA:41:32";
     private final static String WRITE_SERVICE_UUID = "000000ff-0000-1000-8000-00805f9b34fb";
     private final static String WRITE_CHAR_UUID =  "0000ff01-0000-1000-8000-00805f9b34fb";
@@ -236,43 +238,60 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
     long ota_current_bytes_transferred = 0;
     long ota_delta_data_transferred = 0, ota_delta_duration = 0;
     int oncharactersticsWriteCount = 0;
-
+    static String dxeParentFolderFinal = "";
     //***** Bluetooth  Details ****
 
     void CreateDXeFolders()
     {
+        Log.i(TAG, "CreateDXeFolders: *****");
         String dxeFolderPath = Environment.getExternalStorageDirectory().getPath()
                 + File.separator + DXE_FOLDER_PARENT_NAME ;//+ File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
         File sensorData = new File(dxeFolderPath);
 
+        boolean folderCreationInRootFolder = false;
         if (!sensorData.exists()) {
             Log.e(TAG, "onClick: otaFolderPath doesn't Exist: Creating folder::" + dxeFolderPath);
-            sensorData.mkdir();
-            Log.d(TAG, "onClick: ");
+            folderCreationInRootFolder = sensorData.mkdirs();
+            Log.d(TAG, "onClick: "+folderCreationInRootFolder);
         }
 
-        if(sensorData.canRead() == false){
-
-            Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
-            setLogMessage("Folder Creattion FAILED:: Create Manually\n" + dxeFolderPath , TEXT_APPEND);
+        if(folderCreationInRootFolder && sensorData.canRead() == false){
+            Toast.makeText(getApplicationContext(), "FOLDER ACCESS DENIED", Toast.LENGTH_SHORT).show();
+            setLogMessage("FOLDER READ ACCESS DENIED\n" + dxeFolderPath , TEXT_APPEND);
         }else{
-            Log.e(TAG, "CreateDXeFolders: CREATED::: "+dxeFolderPath  );
+            Log.e(TAG, "CreateDXeFolders: CREATION FAILED::: "+dxeFolderPath  );
         }
 
-
-        dxeFolderPath = Environment.getExternalStorageDirectory().getPath()
-                + File.separator + "Documents" ;//+ File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
-         sensorData = new File(dxeFolderPath);
-        if(sensorData.canRead() == false){
-            Log.e(TAG, "CreateDXeFolders: Cant read:" + dxeFolderPath );
-            Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
+        if(!folderCreationInRootFolder) {
+            dxeFolderPath = Environment.getExternalStorageDirectory().getPath()
+                    + File.separator + "Documents" + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
+            sensorData = new File(dxeFolderPath);
+            if (!sensorData.exists()) {
+                Log.e(TAG, "CreateDXeFolders: creating folder:" + dxeFolderPath);
+                folderCreationInRootFolder = sensorData.mkdir();
+                Log.d(TAG, "onClick: " + folderCreationInRootFolder);
+            } else {
+                Log.e(TAG, "CreateDXeFolders: FOLDER Exists:" + dxeFolderPath);
+                folderCreationInRootFolder = true;
+            }
         }
+        if(folderCreationInRootFolder){
+            Log.i(TAG, "CreateDXeFolders: SUCCESS:" + dxeFolderPath);
+            setLogMessage("DXE BASE FOLDER:"+dxeFolderPath, TEXT_APPEND);
+            dxeParentFolderFinal = dxeFolderPath;
+        }else{
+            Log.i(TAG, "CreateDXeFolders: FAILURE:" + dxeFolderPath);
+            setLogMessage("FAILED IN CREATING DXE BASE FOLDER:"+dxeFolderPath, TEXT_APPEND);
+            dxeParentFolderFinal = "";
+        }
+
     }
     SharedPreferences sharedPreferences = null;
     String PREF_MAC_KEY =  "in.co.susiddhi.esp32_ble_tele_ota_MAC";
     @RequiresApi(api = Build.VERSION_CODES.M)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        dxeParentFolderFinal = "";
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         sharedPreferences = this.getSharedPreferences("in.co.susiddhi.esp32_ble_tele_ota", Context.MODE_PRIVATE);
@@ -359,7 +378,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         btnOTA.setText(strOtaStart);
         btnTelemetry.setText(strTelemetryStart);
         progressBarOTA.setMax(100);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (SDK_INT >= Build.VERSION_CODES.O) {
             progressBarOTA.setMin(0x0);
         }
         btnOTA.setVisibility(View.GONE);
@@ -367,74 +386,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         btnOTA.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                setLogMessage("OTA PROCESS: START", TEXT_NOT_APPEND);
-                OtaTransferSuccessCheckUpdateStatus = 0;
-                setOTA_Abort(OTA_ERROR_DEFAULT);
-                String otaFolderPath = "";
-                File otaDir = null;
-                try {
-                    otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                            + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
-                    otaDir = new File(otaFolderPath);
-                    if (!otaDir.exists()) {
-                        Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
-                        otaDir.mkdir();
-                        otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                                + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
-                        otaDir = new File(otaFolderPath);
-                        if (!otaDir.exists()) {
-                            otaDir.mkdirs();
-                            Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
-                        }
-                    }
-                }catch(Exception e){
-                    Log.e(TAG, "onClick: " + e);
-                }
-                if(!mConnected){
-                    setLogMessage("Device not Connected !!!", TEXT_APPEND);
-                    return;
-                }
-                progressBarOTA.setVisibility(View.VISIBLE);
-                Log.d(TAG, "onClick: OTA Click");
-
-                otaFolderPath += DXE_FOLDER_OTA + File.separator;
-                Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
-
-                otaDir = new File(otaFolderPath);
-                if(!otaDir.exists()){
-                    Log.d(TAG, "onClick: Creating Folder otaFolderPath:"+otaFolderPath);
-                    otaDir.mkdir();
-                }
-                Log.d(TAG, "onClick: len:" + otaDir.length() + " isDir:"+otaDir.isDirectory());
-                Log.e(TAG, "startOtaRequestAndFilePath: canRead:" + otaDir.canRead());
-                Log.e(TAG, "startOtaRequestAndFilePath: canWrite:" + otaDir.canWrite());
-                Log.e(TAG, "startOtaRequestAndFilePath: canExecute:" + otaDir.canExecute());
-                if(otaDir.canRead() == false){
-                    setLogMessage("OTA DIR: READ ACCESS DENIED", TEXT_APPEND);
-                    Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
-                }else{
-                    setLogMessage("OTA DIR: READ ACCESS PRESENT", TEXT_APPEND);
-                }
-                File[] files = otaDir.listFiles();
-                int filesFound = 0;
-                if(files != null){
-                    filesFound = files.length;
-                }
-                Log.d("Files", "Found Size: "+ filesFound);
-                for (int i = 0; i < filesFound; i++)
-                {
-                    Log.d("Files", "FileName:" + files[i].getName());
-                    Log.d(TAG, "onClick: path:"+ files[i].getPath() + " Can Read:"+ files[i].canRead());
-                    Log.d(TAG, "onClick: file len:"+ files[i].length());
-                }
-                if(filesFound == 0) {
-                    setLogMessage("Copy OTA File to  below location and Start Again:\n" + otaFolderPath, TEXT_APPEND);
-                    setLogMessage("\nRename file OTA file to: "+OTA_FILE_NAME, TEXT_APPEND);
-                }else {
-                    Message msg = new Message();
-                    msg.what = MSG_GET_FW_DETAILS;
-                    mHandler.sendMessage(msg);
-                }
+                otaFolderProcess();
             }
         });
 
@@ -552,11 +504,92 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
         textViewLog.setMovementMethod(new ScrollingMovementMethod());
 
+        setLogMessage("App Version:" + BuildConfig.VERSION_CODE +"."+ BuildConfig.VERSION_NAME, TEXT_APPEND);
+        setLogMessage("Android API:"+ android.os.Build.VERSION.SDK_INT, TEXT_APPEND);
+
+        Log.e(TAG, "onCreate: "+"App Version:" + BuildConfig.VERSION_CODE + BuildConfig.VERSION_NAME + "\nAndroid API:"+ android.os.Build.VERSION.SDK_INT) ;
         esp32MessageHandler();
         //checkDownloadedFirmwareDetails();
         statusCheck();
         CreateDXeFolders();
+        //otaFolderProcess();
+        if(android.os.Build.VERSION.SDK_INT > 10) {
+            OTA_FILE_NAME = "dxe_ota_file.jpg";
+        }
+
     }//OnCreate
+
+    private void otaFolderProcess() {
+
+        setLogMessage("OTA PROCESS: START", TEXT_NOT_APPEND);
+        OtaTransferSuccessCheckUpdateStatus = 0;
+        setOTA_Abort(OTA_ERROR_DEFAULT);
+        String otaFolderPath = "";
+        File otaDir = null;
+        try {
+            otaFolderPath = dxeParentFolderFinal;
+            otaDir = new File(otaFolderPath);
+            if (!otaDir.exists()) {
+                Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
+                otaDir.mkdir();
+                otaFolderPath = dxeParentFolderFinal;
+                otaDir = new File(otaFolderPath);
+                if (!otaDir.exists()) {
+                    otaDir.mkdirs();
+                    Log.e(TAG, "onClick: otaFolderPath doesn't Exist:"+ otaFolderPath);
+                }
+            }
+        }catch(Exception e){
+            Log.e(TAG, "onClick: " + e);
+        }
+        if(!mConnected){
+            setLogMessage("Device not Connected !!!", TEXT_APPEND);
+            //return;
+        }
+        progressBarOTA.setVisibility(View.VISIBLE);
+        Log.d(TAG, "onClick: OTA Click");
+
+        otaFolderPath += DXE_FOLDER_OTA + File.separator;
+        Log.d(TAG, "onClick: otaFolderPath:"+otaFolderPath);
+
+        otaDir = new File(otaFolderPath);
+        if(!otaDir.exists()){
+            Log.d(TAG, "onClick: Creating Folder otaFolderPath:"+otaFolderPath);
+            otaDir.mkdir();
+        }
+        Log.d(TAG, "onClick: len:" + otaDir.length() + " isDir:"+otaDir.isDirectory());
+        Log.e(TAG, "startOtaRequestAndFilePath: canRead:" + otaDir.canRead());
+        Log.e(TAG, "startOtaRequestAndFilePath: canWrite:" + otaDir.canWrite());
+        Log.e(TAG, "startOtaRequestAndFilePath: canExecute:" + otaDir.canExecute());
+        if(otaDir.canRead() == false){
+            setLogMessage("OTA DIR: READ ACCESS DENIED", TEXT_APPEND);
+            Toast.makeText(getApplicationContext(), "FILE CREATION ERROR", Toast.LENGTH_SHORT).show();
+        }else{
+            setLogMessage("OTA DIR: READ ACCESS PRESENT", TEXT_APPEND);
+        }
+        Log.e(TAG, "onClick: Absoulte Path:"+ otaDir.getAbsolutePath() + " \n ListFiles::"+otaDir.listFiles() );
+        File[] files = otaDir.listFiles();
+        int filesFound = 0;
+        if(files != null){
+            filesFound = files.length;
+        }
+        Log.d("Files", "Found Size: "+ filesFound);
+        for (int i = 0; i < filesFound; i++)
+        {
+            Log.d("Files", "FileName:" + files[i].getName());
+            Log.d(TAG, "onClick: path:"+ files[i].getPath() + " Can Read:"+ files[i].canRead());
+            Log.d(TAG, "onClick: file len:"+ files[i].length());
+        }
+        if(filesFound == 0) {
+            setLogMessage("No Files Found ", TEXT_APPEND);
+            setLogMessage("Copy OTA File to  below location and Start Again:\n" + otaFolderPath, TEXT_APPEND);
+            setLogMessage("\nRename file OTA file to: "+OTA_FILE_NAME, TEXT_APPEND);
+        }else {
+            Message msg = new Message();
+            msg.what = MSG_GET_FW_DETAILS;
+            mHandler.sendMessage(msg);
+        }
+    }
 
 
     public String getPath1(Uri uri) {
@@ -653,12 +686,14 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             // Requesting the permission
             //ActivityCompat.requestPermissions(MainActivity.this, new String[] { permission }, requestCode);
             String[] PERMISSIONS = {
-                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION
             };
             ActivityCompat.requestPermissions(MainActivity.this, PERMISSIONS, requestCode);
             Log.e(TAG, "checkPermission: Requesting permission:"+permission);
+
         }
         else {
             //Toast.makeText(MainActivity.this, "Permission already granted", Toast.LENGTH_SHORT).show();
@@ -799,13 +834,11 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
         String otaFolderPath = "";
         File otaDir = null;
         try {
-            otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                    + File.separator + "documents/" + File.separator;
+            otaFolderPath = dxeParentFolderFinal;
             otaDir = new File(otaFolderPath);
             if (!otaDir.exists()) {
                 //otaDir.mkdir();
-                otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                        + File.separator + "Documents/";
+                otaFolderPath = dxeParentFolderFinal;
                 otaDir = new File(otaFolderPath);
                 if (otaDir.exists()) {
 
@@ -1278,15 +1311,14 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
 
     String checkDownloadedFirmwareDetails() {
         String otaFolderPath = null;
+        String firmware_version = null;
         File otaDir;
         try {
-             otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                    + File.separator + DXE_FOLDER_PARENT_NAME + File.separator;
+             otaFolderPath = dxeParentFolderFinal;
             otaDir = new File(otaFolderPath);
             if (!otaDir.exists()) {
                 otaDir.mkdir();
-                otaFolderPath = Environment.getExternalStorageDirectory().getPath()
-                        + File.separator + DXE_FOLDER_PARENT_NAME;
+                otaFolderPath = dxeParentFolderFinal;
                 otaDir = new File(otaFolderPath);
                 if (otaDir.exists()) {
 
@@ -1296,68 +1328,77 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
             Log.e(TAG, "onClick: " + e);
         }
 
-        otaFolderPath += DXE_FOLDER_OTA + File.separator;
+        otaFolderPath += File.separator + DXE_FOLDER_OTA + File.separator;
         otaFolderPath = otaFolderPath + OTA_FILE_NAME;
         Log.d(TAG, "checkDownloadedFirmwareDetails: OTA file PAth::"+ otaFolderPath);
         File file = new File(otaFolderPath);
         int fileSize = (int) file.length();
-
+        Log.d(TAG, "checkDownloadedFirmwareDetails: FILE LEN:" + fileSize);
+        if(fileSize == 0){
+            setLogMessage("FILE SIZE ZERO", TEXT_APPEND);
+            return null;
+        }
         byte[] value = new byte[fileSize];
         try {
             BufferedInputStream buf = new BufferedInputStream(new FileInputStream(otaFolderPath));
             try {
                 buf.read(value, 0, value.length);
             } catch (Exception e) {
-
+                Log.e(TAG, "checkDownloadedFirmwareDetails: " + e );
             }
         }catch (Exception e){
-            
+            Log.e(TAG, "checkDownloadedFirmwareDetails: " + e );
         }
 
-        String fw_Details = "";
-        int skipByteLen = 4 + 4 + 8 + 32; //int magic word, int secure_ver, int reser[2]
-        byte[] bytePayload = new byte[32];
-        for (int  i  = 0; i < (32); i++){// Firmware version
-            bytePayload[i] = value[skipByteLen+i];
-        }
-        Log.d(TAG, "checkDownloadedFirmwareDetails: "+ bytesToHexString(bytePayload));
-        String strPayload = new String(bytePayload);
-        strPayload = strPayload.replaceAll("\0+$", "");
-        String firmware_version = strPayload;
-        fw_Details += "FIRMWARE VERSION:"+ strPayload;
-        Log.d(TAG, "DownloadedFirware: FW VER:" + strPayload);
+        try {
 
-        skipByteLen = 4 + 4 + 8 + 32 + 32; //int magic word, int secure_ver, int reser[2] + char ver[32]
-        for (int  i  = 0; i < (32); i++){// Project Name
-            bytePayload[i] = value[skipByteLen+i];
-        }
-        strPayload = new String(bytePayload);
-        strPayload = strPayload.replaceAll("\0+$", "");
-        fw_Details += "\nPROJECT NAME:"+ strPayload;
-        Log.d(TAG, "DownloadedFirware: PROJECT NAME:" + strPayload);
+            String fw_Details = "";
+            int skipByteLen = 4 + 4 + 8 + 32; //int magic word, int secure_ver, int reser[2]
+            byte[] bytePayload = new byte[32];
+            for (int i = 0; i < (32); i++) {// Firmware version
+                bytePayload[i] = value[skipByteLen + i];
+            }
+            Log.d(TAG, "checkDownloadedFirmwareDetails: " + bytesToHexString(bytePayload));
+            String strPayload = new String(bytePayload);
+            strPayload = strPayload.replaceAll("\0+$", "");
+            firmware_version = strPayload;
+            fw_Details += "FIRMWARE VERSION:" + strPayload;
+            Log.d(TAG, "DownloadedFirware: FW VER:" + strPayload);
 
-        //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32]
-        skipByteLen = 4 + 4 + 8 + 32 + 32 + 32;
-        for (int  i  = 0; i < (32); i++){// Date and Time
-            bytePayload[i] = value[skipByteLen+i];
-        }
-        bytePayload[14] = ' ';
-        bytePayload[15] = ' ';
-        strPayload = new String(bytePayload);
-        strPayload = strPayload.replaceAll("\0+$", "");
-        fw_Details += "\nBUILD DATE:"+ strPayload;
-        Log.d(TAG, "DownloadedFirware: DATE TIME:" + strPayload);
+            skipByteLen = 4 + 4 + 8 + 32 + 32; //int magic word, int secure_ver, int reser[2] + char ver[32]
+            for (int i = 0; i < (32); i++) {// Project Name
+                bytePayload[i] = value[skipByteLen + i];
+            }
+            strPayload = new String(bytePayload);
+            strPayload = strPayload.replaceAll("\0+$", "");
+            fw_Details += "\nPROJECT NAME:" + strPayload;
+            Log.d(TAG, "DownloadedFirware: PROJECT NAME:" + strPayload);
 
-        //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32] + char date[16] + char time[16]
-        skipByteLen = 4 + 4 + 8 + 32 + 32 + 32+32;
-        for (int  i  = 0; i < (32); i++){// Date and Time
-            bytePayload[i] = value[skipByteLen+i];
+            //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32]
+            skipByteLen = 4 + 4 + 8 + 32 + 32 + 32;
+            for (int i = 0; i < (32); i++) {// Date and Time
+                bytePayload[i] = value[skipByteLen + i];
+            }
+            bytePayload[14] = ' ';
+            bytePayload[15] = ' ';
+            strPayload = new String(bytePayload);
+            strPayload = strPayload.replaceAll("\0+$", "");
+            fw_Details += "\nBUILD DATE:" + strPayload;
+            Log.d(TAG, "DownloadedFirware: DATE TIME:" + strPayload);
+
+            //int magic word, int secure_ver, int reser[2] + char ver[32] + char prj_name[32] + char date[16] + char time[16]
+            skipByteLen = 4 + 4 + 8 + 32 + 32 + 32 + 32;
+            for (int i = 0; i < (32); i++) {// Date and Time
+                bytePayload[i] = value[skipByteLen + i];
+            }
+            strPayload = new String(bytePayload);
+            strPayload = strPayload.replaceAll("\0+$", "");
+            fw_Details += "\nIDF VERSION:" + strPayload;
+            Log.d(TAG, "DownloadedFirware: IDF VER:" + strPayload);
+            //setLogMessage(fw_Details, TEXT_APPEND);
+        }catch(Exception e){
+            Log.e(TAG, "checkDownloadedFirmwareDetails: " + e );
         }
-        strPayload = new String(bytePayload);
-        strPayload = strPayload.replaceAll("\0+$", "");
-        fw_Details += "\nIDF VERSION:"+ strPayload;
-        Log.d(TAG, "DownloadedFirware: IDF VER:" + strPayload);
-        //setLogMessage(fw_Details, TEXT_APPEND);
         return firmware_version;
     }
 
@@ -1442,6 +1483,7 @@ public static  final int BT_HEADER_END_INDEX                 =    7;
                 if(downloadFwVer.length() == 0) {
                     downloadFwVer = checkDownloadedFirmwareDetails();
                 }
+                if(downloadFwVer == null)return;
                 downloadFwVer = downloadFwVer.replaceAll("\0+$", "");
                 deviceFirmwareVersion = deviceFirmwareVersion.replaceAll("\0+$", "");
                 Log.d(TAG, "startOTAProcess: DOWNLOADED FW:"+ downloadFwVer );

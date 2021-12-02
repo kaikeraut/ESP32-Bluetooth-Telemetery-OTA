@@ -68,8 +68,7 @@ public class TelemetryDataDisplay extends AppCompatActivity {
             @Override
             public void onClick(View view) {
 
-                String dxeFolderPath = Environment.getExternalStorageDirectory().getPath()
-                        + File.separator + DXE_FOLDER_PARENT_NAME ;//+ File.separator + DXE_SENSOR_DATA_FOLDER_NAME + File.separator;
+                String dxeFolderPath = MainActivity.dxeParentFolderFinal;
                 File sensorData = new File(dxeFolderPath);
                 if(sensorData.canRead() == false){
 
